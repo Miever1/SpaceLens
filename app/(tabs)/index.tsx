@@ -1,98 +1,119 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+// app/(tabs)/index.tsx
+import React, { useState } from "react";
+import { StyleSheet, View } from "react-native";
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import PhotoDetail from "../../components/gallery/PhotoDetail";
+import PhotoGrid from "../../components/gallery/PhotoGrid";
+import PopupMenu from "../../components/gallery/PopupMenu";
+import ModelViewer3D from "../../components/three/ModelViewer3D";
+import ModelViewerAR from "../../components/three/ModelViewerAR";
 
-export default function HomeScreen() {
+import usePhotoAssets, { MyAsset } from "../../hooks/usePhotoAssets";
+import useTouchEffect from "../../hooks/useTouchEffect";
+
+export default function AlbumTab() {
+  const { assets, loading, loadMore, addPhoto, deleteAsset } = usePhotoAssets();
+
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [popupVisible, setPopupVisible] = useState(false);
+  const [popupAsset, setPopupAsset] = useState<MyAsset | null>(null);
+
+  const [show3D, setShow3D] = useState(false);
+  const [showAR, setShowAR] = useState(false);
+
+  const { renderTouchEffects, triggerTouchEffect } = useTouchEffect();
+
+  const handleLongPress = (x: number, y: number, asset: MyAsset) => {
+    triggerTouchEffect(x, y);
+    setPopupAsset(asset);
+    setPopupVisible(true);
+  };
+
+  const closeDetail = () => {
+    setSelectedIndex(null);
+    setShow3D(false);
+    setShowAR(false);
+    setPopupVisible(false);
+    setPopupAsset(null);
+  };
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
+    <View style={styles.container}>
+      {/* 网格模式 */}
+      {selectedIndex === null && !show3D && !showAR && (
+        <PhotoGrid
+          assets={assets}
+          loading={loading}
+          onAddPhoto={addPhoto}
+          onPress={(i) => setSelectedIndex(i)}
+          onLoadMore={loadMore}
         />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+      )}
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+      {/* 大图预览 */}
+      {selectedIndex !== null && !show3D && !showAR && (
+        <PhotoDetail
+          assets={assets}
+          index={selectedIndex}
+          onChangeIndex={setSelectedIndex}
+          onClose={closeDetail}
+          onLongPress={handleLongPress}
+        />
+      )}
+
+      {/* Touch 爆裂特效（全局覆盖） */}
+      {renderTouchEffects()}
+
+      {/* Popup 操作菜单 */}
+      {popupVisible && popupAsset && (
+        <PopupMenu
+          asset={popupAsset}
+          onClose={() => setPopupVisible(false)}
+          onOpen3D={() => {
+            setPopupVisible(false);
+            setShow3D(true);
+          }}
+          onOpenAR={() => {
+            setPopupVisible(false);
+            setShowAR(true);
+          }}
+          onDelete={async () => {
+            await deleteAsset(popupAsset.id);
+            setPopupVisible(false);
+            setPopupAsset(null);
+            setSelectedIndex(null);
+            setShow3D(false);
+            setShowAR(false);
+          }}
+        />
+      )}
+
+      {/* 3D Viewer */}
+      {show3D && (
+        <ModelViewer3D
+          glb="https://miever.s3.ap-east-1.amazonaws.com/static/projects/Sofa_01_4k-1.glb"
+          usdz="https://miever.s3.ap-east-1.amazonaws.com/static/projects/Sofa_01_4k-1.usdz"
+          onClose={() => setShow3D(false)}
+          onOpenAR={() => {
+            // 从 3D 页面一键跳到 AR
+            setShow3D(false);
+            setShowAR(true);
+          }}
+        />
+      )}
+
+      {/* AR Viewer */}
+      {showAR && (
+        <ModelViewerAR
+          glb="https://miever.s3.ap-east-1.amazonaws.com/static/projects/Sofa_01_4k-1.glb"
+          usdz="https://miever.s3.ap-east-1.amazonaws.com/static/projects/Sofa_01_4k-1.usdz"
+          onClose={() => setShowAR(false)}
+        />
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
+  container: { flex: 1, backgroundColor: "#000" },
 });
