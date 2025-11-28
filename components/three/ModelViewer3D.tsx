@@ -2,20 +2,39 @@
 import * as Haptics from "expo-haptics";
 import React, { useEffect, useState } from "react";
 import {
-    Animated,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Animated,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { WebView } from "react-native-webview";
 import use3DModelControls from "../../hooks/use3DModelControls";
+
+type ThreeConfig = {
+  glb: string;
+  usdz: string;
+  color: string;
+  texture: string;
+  light: string;
+  mockSize: { length: number; width: number; height: number };
+};
 
 type Props = {
   glb: string;
   usdz: string;
   onClose: () => void;
   onOpenAR: () => void;
+
+  // 把当前 3D 配置发给上层（聊天）
+  onSend3DToChat?: (payload: ThreeConfig) => void;
+
+  // 从聊天“放大”时，传入初始配置，恢复同样效果
+  initialConfig?: {
+    color: string;
+    texture: string;
+    light: string;
+  };
 };
 
 type PanelMode = "color" | "texture" | "light";
@@ -25,6 +44,8 @@ export default function ModelViewer3D({
   usdz,
   onClose,
   onOpenAR,
+  onSend3DToChat,
+  initialConfig,
 }: Props) {
   const {
     webviewRef,
@@ -53,6 +74,15 @@ export default function ModelViewer3D({
   useEffect(() => {
     startLoadAnim();
   }, [startLoadAnim]);
+
+  // 如果有初始配置，先同步到本地 state
+  useEffect(() => {
+    if (initialConfig) {
+      setCurrentColor(initialConfig.color || "gray");
+      setCurrentTexture(initialConfig.texture || "none");
+      setCurrentLight(initialConfig.light || "normal");
+    }
+  }, [initialConfig]);
 
   // 标签文案
   const COLOR_LABEL: Record<string, string> = {
@@ -83,13 +113,6 @@ export default function ModelViewer3D({
   const colorLabel = COLOR_LABEL[currentColor] || COLOR_LABEL.default;
   const textureLabel = TEXTURE_LABEL[currentTexture] || "纹理";
   const lightLabel = LIGHT_LABEL[currentLight] || "灯光";
-
-  // 尺寸格式化（米 → cm）
-  const formatSize = (v: number) => {
-    if (!v || Number.isNaN(v)) return "-";
-    const cm = Math.round(v * 100); // m → cm
-    return `${cm}cm`;
-  };
 
   const html = `
   <html>
@@ -169,7 +192,6 @@ export default function ModelViewer3D({
           let size = { x: 0, y: 0, z: 0 };
 
           try {
-            // 新版 model-viewer
             if (viewer.model.getDimensions) {
               const dim = viewer.model.getDimensions();
               size = { x: dim.x, y: dim.y, z: dim.z };
@@ -190,8 +212,6 @@ export default function ModelViewer3D({
             if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
               window.ReactNativeWebView.postMessage(payload);
             }
-
-            console.log("model dimensions:", size);
           } catch (e) {
             console.error("computeModelSize error", e);
           }
@@ -199,7 +219,6 @@ export default function ModelViewer3D({
 
         viewer.addEventListener("load", () => {
           modelReady = true;
-          console.log("model-viewer model loaded");
           computeModelSize();
         });
 
@@ -222,7 +241,6 @@ export default function ModelViewer3D({
           try {
             const mat = viewer.model.materials[0];
             mat.pbrMetallicRoughness.setBaseColorFactor(rgba);
-            console.log("color changed", name);
           } catch (e) {
             console.error("changeSofaColor error", e);
           }
@@ -235,10 +253,11 @@ export default function ModelViewer3D({
           const url = TEXTURE_MAP[name];
           try {
             const mat = viewer.model.materials[0];
-            const pbr = mat.pbrMetallicRoughness;
+            const pbr = mat.pbrMetalicRoughness || mat.pbrMetallicRoughness;
+
+            if (!pbr) return;
 
             if (!url) {
-              console.log("clear texture");
               if (pbr.setBaseColorTexture) {
                 pbr.setBaseColorTexture(null);
               }
@@ -252,11 +271,7 @@ export default function ModelViewer3D({
             }
 
             if (!textureCache[name]) {
-              console.log("loading texture", url);
-              if (!viewer.createTexture) {
-                console.warn("viewer.createTexture not found");
-                return;
-              }
+              if (!viewer.createTexture) return;
               textureCache[name] = await viewer.createTexture(url);
             }
             const tex = textureCache[name];
@@ -268,8 +283,6 @@ export default function ModelViewer3D({
             }
 
             pbr.setBaseColorFactor && pbr.setBaseColorFactor([1,1,1,1]);
-
-            console.log("texture changed", name);
           } catch (e) {
             console.error("changeSofaTexture error", e);
           }
@@ -283,8 +296,6 @@ export default function ModelViewer3D({
           viewer.style.backgroundColor = preset.background;
           viewer.exposure = preset.exposure;
           viewer.shadowIntensity = preset.shadowIntensity;
-
-          console.log("light preset:", name, preset);
         };
 
         // ========= 重置相机 =========
@@ -338,7 +349,20 @@ export default function ModelViewer3D({
         source={{ html }}
         style={{ flex: 1 }}
         onLoadStart={() => setLoading(true)}
-        onLoadEnd={() => setLoading(false)}
+        onLoadEnd={() => {
+          setLoading(false);
+
+          // 如果有初始配置，加载完后同步到 Web 里的 model-viewer
+          if (initialConfig && webviewRef.current) {
+            const js = `
+              window.changeSofaColor("${initialConfig.color}");
+              window.changeSofaTexture("${initialConfig.texture}");
+              window.changeLightPreset("${initialConfig.light}");
+              true;
+            `;
+            webviewRef.current.injectJavaScript(js);
+          }
+        }}
         onMessage={(event) => {
           try {
             const msg = JSON.parse(event.nativeEvent.data);
@@ -346,7 +370,7 @@ export default function ModelViewer3D({
               setDimensions(msg.data);
             }
           } catch {
-            // 其他消息忽略
+            // ignore
           }
         }}
       />
@@ -386,7 +410,7 @@ export default function ModelViewer3D({
         {dimensions && (
           <View style={{ marginBottom: 8 }}>
             <Text style={{ color: "#999", fontSize: 11 }}>
-                预计尺寸：{MOCK_SIZE.length} × {MOCK_SIZE.width} × {MOCK_SIZE.height} cm
+              预计尺寸：{MOCK_SIZE.length} × {MOCK_SIZE.width} × {MOCK_SIZE.height} cm
             </Text>
           </View>
         )}
@@ -565,7 +589,28 @@ export default function ModelViewer3D({
           </View>
         )}
 
-        {/* 底部：进入 AR */}
+        {/* 底部：发送 3D 到聊天 + 进入 AR */}
+        {onSend3DToChat && (
+          <TouchableOpacity
+            style={styles.copyButton}
+            onPress={async () => {
+              await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+              const payload: ThreeConfig = {
+                glb,
+                usdz,
+                color: currentColor,
+                texture: currentTexture,
+                light: currentLight,
+                mockSize: MOCK_SIZE,
+              };
+              onSend3DToChat(payload);
+            }}
+          >
+            <Text style={styles.copyButtonText}>发送 3D 到聊天</Text>
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity
           style={styles.arButton}
           onPress={async () => {
@@ -583,7 +628,8 @@ export default function ModelViewer3D({
 const DOT = 26;
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000" },
+  // ✅ 改成透明，这样外层可以自己控制背景（模糊 / 黑色等）
+  container: { flex: 1, backgroundColor: "transparent" },
 
   closeBtn: {
     position: "absolute",
@@ -725,6 +771,21 @@ const styles = StyleSheet.create({
   textureText: {
     color: "#eee",
     fontSize: 11,
+  },
+
+  copyButton: {
+    marginTop: 2,
+    marginBottom: 6,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+    backgroundColor: "rgba(255,255,255,0.04)",
+    alignItems: "center",
+  },
+  copyButtonText: {
+    color: "#eee",
+    fontSize: 13,
   },
 
   arButton: {

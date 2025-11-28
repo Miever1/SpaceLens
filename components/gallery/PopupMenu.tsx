@@ -1,11 +1,11 @@
 // components/gallery/PopupMenu.tsx
 import React from "react";
 import {
-    Share,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Share,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import type { MyAsset } from "../../hooks/usePhotoAssets";
 
