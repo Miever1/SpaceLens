@@ -9,7 +9,7 @@
 // 真机调后端：用你后端所在机器的局域网 IP + 端口
 const BASE_URL = "https://overidly-anthropogenic-margot.ngrok-free.dev";
 
-const SAM3D_TOKEN = "my_secure_token_123";           
+const SAM3D_TOKEN = "";           
 export type SamPoint = {
   x: number;
   y: number;
