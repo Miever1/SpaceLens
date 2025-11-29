@@ -13,7 +13,6 @@ import {
 } from "react-native";
 import { WebView } from "react-native-webview";
 
-import { Preview3DModal } from "@/components/gallery/ui/DetailOverlays";
 
 type Message =
   | {
@@ -274,7 +273,7 @@ export default function ChatScreen() {
       </View>
 
       {/* 全屏 3D 预览 */}
-      {viewerUrl && (
+      {/* {viewerUrl && (
         <Preview3DModal
           glbUrl={viewerUrl}
           loading={viewerLoading}
@@ -284,7 +283,7 @@ export default function ChatScreen() {
           }}
           onLoaded={() => setViewerLoading(false)}
         />
-      )}
+      )} */}
     </KeyboardAvoidingView>
   );
 }

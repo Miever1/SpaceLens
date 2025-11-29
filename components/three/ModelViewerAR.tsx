@@ -8,14 +8,14 @@ export default function ModelViewerAR({
   glb,
   onClose,
 }: {
-  usdz: string;
+  usdz?: string;
   glb: string;
   onClose: () => void;
 }) {
 
   useEffect(() => {
     const openAR = async () => {
-      if (Platform.OS === "ios") {
+      if (Platform.OS === "ios" && usdz) {
         await WebBrowser.openBrowserAsync(usdz);
       } else {
         await WebBrowser.openBrowserAsync(
