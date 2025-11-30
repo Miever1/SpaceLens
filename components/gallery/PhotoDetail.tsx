@@ -70,7 +70,7 @@ const BubbleMenu: React.FC<BubbleMenuProps> = ({
   </View>
 );
 
-/* ---------------- 选区内特效 ---------------- */
+/* ---------------- 选区内特效（只做边框 + 扫光） ---------------- */
 
 const SegPreviewOverlay = ({ maskUri }: { maskUri: string }) => {
   const pulse = useRef(new Animated.Value(0)).current;
@@ -115,16 +115,13 @@ const SegPreviewOverlay = ({ maskUri }: { maskUri: string }) => {
     };
   }, [pulse, shimmer]);
 
-  const fillOpacity = pulse.interpolate({
+  // 描边亮度
+  const strokeOpacity = pulse.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.1, 0.22],
+    outputRange: [0.4, 1],
   });
 
-  const glowRadius = pulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [8, 18],
-  });
-
+  // 扫光位置
   const shimmerTranslate = shimmer.interpolate({
     inputRange: [0, 1],
     outputRange: [-screenW, screenW],
@@ -142,28 +139,17 @@ const SegPreviewOverlay = ({ maskUri }: { maskUri: string }) => {
         />
       }
     >
-      {/* 区域内淡青色填充 */}
+      {/* ✅ 只有描边，不再做内部填充 */}
       <Animated.View
         style={[
-          StyleSheet.absoluteFill,
+          styles.segStroke,
           {
-            backgroundColor: "#00E0FF",
-            opacity: fillOpacity,
+            opacity: strokeOpacity,
           },
         ]}
       />
 
-      {/* 边缘 glow */}
-      <Animated.View
-        style={[
-          styles.segGlow,
-          {
-            shadowRadius: glowRadius,
-          },
-        ]}
-      />
-
-      {/* 斜向高光刷过 */}
+      {/* 斜向扫光，刷过边缘时会有一点高亮 */}
       <Animated.View
         style={[
           styles.segShimmer,
@@ -366,63 +352,93 @@ export default function PhotoDetail({
       {/* 中间内容区域：FlatList + 各种 overlay，只覆盖内容区，不挡住 header/bottom */}
       <View style={styles.content}>
         <FlatList
-  data={assets}
-  horizontal
-  pagingEnabled
-  initialScrollIndex={index}
-  showsHorizontalScrollIndicator={false}
-  keyExtractor={(item) => item.id}
-  getItemLayout={(_, i) => ({
-    length: screenW,
-    offset: screenW * i,
-    index: i,
-  })}
-  onMomentumScrollEnd={(e) => {
-    const newIndex = Math.floor(e.nativeEvent.contentOffset.x / screenW);
-    onChangeIndex(newIndex);
-    setBubbleVisible(false);
-  }}
-  renderItem={({ item }) => {
-    const pts = points[item.id] ?? [];
-    const isSeg = segAssetId === item.id;
+          data={assets}
+          horizontal
+          pagingEnabled
+          initialScrollIndex={index}
+          showsHorizontalScrollIndicator={false}
+          keyExtractor={(item) => item.id}
+          getItemLayout={(_, i) => ({
+            length: screenW,
+            offset: screenW * i,
+            index: i,
+          })}
+          onMomentumScrollEnd={(e) => {
+            const newIndex = Math.floor(
+              e.nativeEvent.contentOffset.x / screenW
+            );
+            onChangeIndex(newIndex);
+            setBubbleVisible(false);
+          }}
+          renderItem={({ item }) => {
+            const pts = points[item.id] ?? [];
+            const isSeg = segAssetId === item.id;
 
-    return (
-      <Pressable
-        style={styles.itemWrapper}
-        onLongPress={(e) => onLongPress(e, item)}
-        onPress={() => setBubbleVisible(false)}
-      >
-        <Image
-          source={{ uri: item.uri }}
-          style={styles.image}
-          resizeMode="contain"
-          onLayout={(ev) =>
-            setImgLayout({
-              x: ev.nativeEvent.layout.x,
-              y: ev.nativeEvent.layout.y,
-              width: ev.nativeEvent.layout.width,
-              height: ev.nativeEvent.layout.height,
-            })
-          }
+            return (
+              <Pressable
+                style={styles.itemWrapper}
+                onLongPress={(e) => onLongPress(e, item)}
+                onPress={() => setBubbleVisible(false)}
+              >
+                <Image
+                  source={{ uri: item.uri }}
+                  style={styles.image}
+                  resizeMode="contain"
+                  onLayout={(ev) =>
+                    setImgLayout({
+                      x: ev.nativeEvent.layout.x,
+                      y: ev.nativeEvent.layout.y,
+                      width: ev.nativeEvent.layout.width,
+                      height: ev.nativeEvent.layout.height,
+                    })
+                  }
+                />
+
+                {/* 整张图变暗的遮罩，只在有分割预览时显示 */}
+                {isSeg && (
+                  <View
+                    pointerEvents="none"
+                    style={styles.segDimBackground}
+                  />
+                )}
+
+                {/* 用 mask 把选中区域重新“提亮”成原图 */}
+                {isSeg && segMaskUri && (
+                  <MaskedView
+                    style={StyleSheet.absoluteFill}
+                    pointerEvents="none"
+                    maskElement={
+                      <Image
+                        source={{ uri: segMaskUri }}
+                        style={styles.segOverlayImage}
+                        resizeMode="contain"
+                      />
+                    }
+                  >
+                    <Image
+                      source={{ uri: item.uri }}
+                      style={styles.image}
+                      resizeMode="contain"
+                    />
+                  </MaskedView>
+                )}
+
+                {/* 选中区域的边框 + 扫光特效 */}
+                {isSeg && segMaskUri && (
+                  <SegPreviewOverlay maskUri={segMaskUri} />
+                )}
+
+                {imgLayout && pts.length > 0 && (
+                  <PointsOverlay
+                    points={pts}
+                    asset={item}
+                    imgLayout={imgLayout}
+                  />
+                )}
+              </Pressable>
+            );
+          }}
         />
-
-        {isSeg && segPreviewUri && (
-          <Image
-            source={{ uri: segPreviewUri }}
-            style={styles.segOverlayImage}
-            resizeMode="contain"
-          />
-        )}
-
-        {isSeg && segMaskUri && <SegPreviewOverlay maskUri={segMaskUri} />}
-
-        {imgLayout && pts.length > 0 && (
-          <PointsOverlay points={pts} asset={item} imgLayout={imgLayout} />
-        )}
-      </Pressable>
-    );
-  }}
-/>
 
         {/* 分割 loading 遮罩（只盖内容区域） */}
         {isSegmenting && (
@@ -529,6 +545,23 @@ const styles = StyleSheet.create({
     bottom: 0,
   },
 
+  // 只画 mask 范围内的描边
+  segStroke: {
+    ...StyleSheet.absoluteFillObject,
+    borderWidth: 1.5,
+    borderColor: "rgba(0,224,255,0.95)",
+    borderRadius: 4,
+  },
+
+  // 斜向扫光
+  segShimmer: {
+    position: "absolute",
+    top: -screenH,
+    bottom: -screenH,
+    width: screenW * 0.4,
+    backgroundColor: "rgba(255,255,255,0.15)",
+  },
+
   pointDot: {
     position: "absolute",
     width: 22,
@@ -586,39 +619,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
-  segGlow: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    borderWidth: 1,
-    borderColor: "rgba(0,224,255,0.95)",
-    shadowColor: "#00E0FF",
-    shadowOpacity: 0.9,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 6,
-  },
-
-  segShimmer: {
-    position: "absolute",
-    top: -screenH,
-    bottom: -screenH,
-    width: screenW * 0.4,
-    backgroundColor: "rgba(255,255,255,0.15)",
-  },
-
-  scanLine: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    height: 80,
-    backgroundColor: "rgba(0,224,255,0.16)",
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: "rgba(0,224,255,0.9)",
-  },
-
   ripple: {
     position: "absolute",
     width: 180,
@@ -628,5 +628,11 @@ const styles = StyleSheet.create({
     borderColor: "#00E0FF",
     backgroundColor: "rgba(0,224,255,0.18)",
     zIndex: 50,
+  },
+
+  // 整体变暗
+  segDimBackground: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
   },
 });

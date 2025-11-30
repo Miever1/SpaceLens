@@ -27,9 +27,16 @@ export type Sam3DItem = {
 };
 
 /* -------------------------------------------------------------------------- */
+/* 小工具：拼 URL（处理相对路径 / 绝对路径）                                   */
+/* -------------------------------------------------------------------------- */
+function resolveUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${BASE_URL}${path}`;
+}
+
+/* -------------------------------------------------------------------------- */
 /* 1) 2D 分割：上传图片 + 多个点 → 返回 { segUrl, maskUrl }                    */
-/*    segUrl  : 后端生成的可视化 PNG（暗背景 + 绿边），可选显示                */
-/*    maskUrl : 纯 mask PNG（透明背景，前景 alpha=1），给前端特效用          */
 /* -------------------------------------------------------------------------- */
 export async function sam3dSegment(params: {
   uri: string;
@@ -38,35 +45,49 @@ export async function sam3dSegment(params: {
 }): Promise<{ segUrl: string; maskUrl: string }> {
   const { uri, serverFilename, points } = params;
 
+  if (!points || points.length === 0) {
+    throw new Error("sam3dSegment: points 不能为空");
+  }
+
+  // ⭐ 补齐 label，强制都为前景点 1（防止 undefined 被后端当成 0）
+  const normalizedPoints = points.map((p) => ({
+    ...p,
+    label: typeof p.label === "number" ? p.label : 1,
+  }));
+
   const form = new FormData();
   form.append("file", {
     uri,
-    name: serverFilename,
+    name: serverFilename,        // ⚠️ 要和 generate3d 用同一个名字
     type: "image/jpeg",
   } as any);
 
-  // ⭐ 必须传这个（后端通过 points_json 做多点分割）
-  form.append("points_json", JSON.stringify(points));
+  form.append("points_json", JSON.stringify(normalizedPoints));
 
-  const res = await fetch(`${BASE_URL}/segment/`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${SAM3D_TOKEN}`,
-    },
-    body: form,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/segment/`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SAM3D_TOKEN}`,
+      },
+      body: form,
+    });
+  } catch (err) {
+    console.error("sam3dSegment: network error", err);
+    throw new Error("segment network error");
+  }
 
   if (!res.ok) {
-    const text = await res.text();
+    const text = await res.text().catch(() => "");
+    console.error("sam3dSegment: bad response", res.status, text);
     throw new Error(`segment failed: ${res.status} ${text}`);
   }
 
-  // 现在后端返回 JSON：
-  // { "seg_url": "/seg_vis/seg_xxx.png", "mask_url": "/mask/mask_xxx.png" }
   const json = await res.json();
 
-  const segUrl = `${BASE_URL}${json.seg_url}`;
-  const maskUrl = `${BASE_URL}${json.mask_url}`;
+  const segUrl = resolveUrl(json.seg_url)!;
+  const maskUrl = resolveUrl(json.mask_url)!;
 
   return { segUrl, maskUrl };
 }
@@ -76,11 +97,9 @@ export async function sam3dSegment(params: {
 /* -------------------------------------------------------------------------- */
 export async function sam3dGenerate3D(params: {
   uri: string;
-  serverFilename: string;
-  x?: number;
-  y?: number;
+  serverFilename: string;  // ⚠️ 必须和 sam3dSegment 里的一致
 }): Promise<{ glbUrl: string; usdzUrl?: string | null }> {
-  const { uri, serverFilename, x, y } = params;
+  const { uri, serverFilename } = params;
 
   const form = new FormData();
   form.append("file", {
@@ -89,36 +108,29 @@ export async function sam3dGenerate3D(params: {
     type: "image/jpeg",
   } as any);
 
-  // 后端目前不依赖 x,y，有就带上，没有也没关系
-  if (typeof x === "number") form.append("x", String(x));
-  if (typeof y === "number") form.append("y", String(y));
-
-  const res = await fetch(`${BASE_URL}/generate3d/`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${SAM3D_TOKEN}`,
-    },
-    body: form,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/generate3d/`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SAM3D_TOKEN}`,
+      },
+      body: form,
+    });
+  } catch (err) {
+    console.error("sam3dGenerate3D: network error", err);
+    throw new Error("generate3d network error");
+  }
 
   if (!res.ok) {
-    const text = await res.text();
+    const text = await res.text().catch(() => "");
+    console.error("sam3dGenerate3D: bad response", res.status, text);
     throw new Error(`generate3d failed: ${res.status} ${text}`);
   }
 
-  // 后端现在返回：
-  // { glb_url: "...", usdz_url: "..." | null }
   const data = await res.json();
-  let glbUrl = data.glb_url as string;
-  let usdzUrl = data.usdz_url as string | null | undefined;
-
-  // 如果是相对路径（/models/xxx.glb），拼上 BASE_URL
-  if (!/^https?:\/\//i.test(glbUrl)) {
-    glbUrl = `${BASE_URL}${glbUrl}`;
-  }
-  if (usdzUrl && !/^https?:\/\//i.test(usdzUrl)) {
-    usdzUrl = `${BASE_URL}${usdzUrl}`;
-  }
+  const glbUrl = resolveUrl(data.glb_url)!;
+  const usdzUrl = resolveUrl(data.usdz_url) ?? null;
 
   return { glbUrl, usdzUrl };
 }
@@ -127,18 +139,25 @@ export async function sam3dGenerate3D(params: {
 /* 3) 列出 S3 里所有 3D 模型                                                   */
 /* -------------------------------------------------------------------------- */
 export async function sam3dListModels(): Promise<Sam3DItem[]> {
-  const res = await fetch(`${BASE_URL}/list3d/`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${SAM3D_TOKEN}`,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/list3d/`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${SAM3D_TOKEN}`,
+      },
+    });
+  } catch (err) {
+    console.error("sam3dListModels: network error", err);
+    throw new Error("list3d network error");
+  }
 
   if (!res.ok) {
-    const text = await res.text();
+    const text = await res.text().catch(() => "");
+    console.error("sam3dListModels: bad response", res.status, text);
     throw new Error(`list3d failed: ${res.status} ${text}`);
   }
 
   const data = await res.json();
-  return data.items as Sam3DItem[];
+  return (data.items || []) as Sam3DItem[];
 }

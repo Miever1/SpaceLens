@@ -5,6 +5,7 @@ import { DeviceMotion } from "expo-sensors";
 import React, { useEffect, useRef } from "react";
 import { Animated, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
+import { useRouter } from "expo-router";
 import { WebView } from "react-native-webview";
 import ShareButton from "../common/ShareButton";
 
@@ -16,6 +17,7 @@ type Props = {
   usdz?: string;
   onClose: () => void;
   onOpenAR: () => void;
+  onShareToChat: (glbUrl: string) => void;
 };
 
 export default function ModelViewer3D({
@@ -23,7 +25,9 @@ export default function ModelViewer3D({
   usdz,
   onClose,
   onOpenAR,
+  onShareToChat,
 }: Props) {
+  const router = useRouter();
   const { webviewRef, loading, setLoading, startLoadAnim, rotate, pulse } =
     use3DModelControls();
 
@@ -156,7 +160,7 @@ export default function ModelViewer3D({
         });
 
         const BASE_YAW = 0;
-        const BASE_PITCH = 80;
+        const BASE_PITCH = 85;
 
         window.updateCameraFromRN = function(yaw, pitch) {
           if (!viewer) return;
@@ -196,17 +200,20 @@ export default function ModelViewer3D({
   );
 
   const bottomSlot = (
-    <View style={styles.bottomBarInner}>
-      <TouchableOpacity
-        style={styles.bottomShareBtn}
-        onPress={() => {
-          console.log("TODO: share photo");
-        }}
-      >
-        <EvilIcons name="share-apple" size={24} color="black" />
-      </TouchableOpacity>
-    </View>
-  );
+  <View style={styles.bottomBarInner}>
+    <TouchableOpacity
+      style={styles.bottomShareBtn}
+      onPress={() => {
+        router.push({
+          pathname: "/chat",
+          params: { glb },
+        });
+      }}
+    >
+      <EvilIcons name="share-apple" size={24} color="black" />
+    </TouchableOpacity>
+  </View>
+);
 
   const handleShare = () => {
     console.log("TODO: share 3D model");

@@ -198,6 +198,7 @@ export default function AlbumTab() {
       {show3D && active3DModel && (
         <ModelViewer3D
           glb={active3DModel.url}
+          onShareToChat={() => {}}
           onClose={() => {
             setShow3D(false);
             setActive3DModel(null);

@@ -1,6 +1,7 @@
 import type { Sam3DItem } from "@/api/sam3d";
 import type { MyAsset } from "@/hooks/usePhotoAssets";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useMemo, useRef } from "react";
 import {
   ActivityIndicator,
@@ -15,33 +16,34 @@ import {
   UIManager,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { WebView } from "react-native-webview";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import MiniModelViewer from "../three/MiniModelViewer";
 
 const { width } = Dimensions.get("window");
-const SIZE = width / 3 - 4;
+
+// 不同宽度下自动调列数
+const getNumColumns = () => {
+  if (width >= 1024) return 5;  // iPad 横屏
+  if (width >= 768) return 4;   // iPad 竖屏
+  return 3;                     // iPhone
+};
+
+const NUM_COLUMNS = getNumColumns();
+const SIZE = width / NUM_COLUMNS - 5;
+
+// ⭐ 顶部标题区域高度（FlatList 用它来 paddingTop）
+const HEADER_HEIGHT = 80;
 
 /* -------------------------------------------------------------------------- */
 /* GridItem 类型                                                              */
 /* -------------------------------------------------------------------------- */
 export type GridItem =
-  | {
-      kind: "photo";
-      id: string;
-      uri: string;
-      assetIndex: number;
-    }
-  | {
-      kind: "3d";
-      id: string;
-      glbUrl: string;
-      name: string;
-    }
+  | { kind: "photo"; id: string; uri: string; assetIndex: number }
+  | { kind: "3d"; id: string; glbUrl: string; name: string }
   | {
       kind: "placeholder";
       assetId: string;
       status: "pending" | "error";
-      /** 占位格要用到的背景图（原始照片） */
       thumbUri?: string;
     };
 
@@ -51,21 +53,15 @@ export type GridItem =
 type Props = {
   assets: MyAsset[];
   loading: boolean;
-
   threeModels?: Sam3DItem[];
-
   generatingStatus: Record<
     string,
     { status: "pending" | "error" | "done"; model?: Sam3DItem }
   >;
-
   onPress: (index: number) => void;
   onPress3D?: (item: Sam3DItem, index: number) => void;
-
   onAddPhoto: () => void;
   onLoadMore: () => void;
-
-  /** ⭐ 把每个 item 的屏幕绝对布局报告给 AlbumTab（飞行动画） */
   onItemLayout?: (
     item: GridItem,
     layout: { x: number; y: number; width: number; height: number }
@@ -73,77 +69,13 @@ type Props = {
 };
 
 /* -------------------------------------------------------------------------- */
-/* 小号 WebView 3D 预览                                                       */
-/* -------------------------------------------------------------------------- */
-const Mini3DPreview = ({ glbUrl }: { glbUrl: string }) => {
-  const html = `
-    <html>
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
-        <style>
-          html, body {
-            margin:0;
-            padding:0;
-            background:#eee;
-            overflow:hidden;
-          }
-          model-viewer {
-            width:100%;
-            height:100%;
-            background:#eee;
-          }
-        </style>
-      </head>
-      <body>
-        <model-viewer
-          src="${glbUrl}"
-          auto-rotate
-          rotation-per-second="25deg"
-          shadow-intensity="0.6"
-          exposure="1.0"
-          disable-tap
-          disable-zoom
-          disable-pan
-        ></model-viewer>
-      </body>
-    </html>
-  `;
-
-  return (
-    <WebView
-      source={{ html }}
-      originWhitelist={["*"]}
-      scrollEnabled={false}
-      // 关键：让所有触摸事件穿透给外面的 TouchableOpacity
-      pointerEvents="none"
-      style={styles.image}
-      onError={(e) => {
-    console.warn("Mini3DPreview webview error", e.nativeEvent);
-  }}
-    />
-  );
-};
-
-/* -------------------------------------------------------------------------- */
 /* 占位格子：原图背景 + 发光呼吸边框                                         */
 /* -------------------------------------------------------------------------- */
-type PlaceholderCellProps = {
-  status: "pending" | "error";
-  thumbUri?: string;
-  onLayout: (e: any) => void;
-};
-
-const PlaceholderCell: React.FC<PlaceholderCellProps> = ({
-  status,
-  thumbUri,
-  onLayout,
-}) => {
+const PlaceholderCell = ({ status, thumbUri, onLayout }: any) => {
   const progress = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (status !== "pending") return;
-
     Animated.loop(
       Animated.sequence([
         Animated.timing(progress, {
@@ -158,29 +90,13 @@ const PlaceholderCell: React.FC<PlaceholderCellProps> = ({
         }),
       ])
     ).start();
-  }, [status, progress]);
+  }, [status]);
 
   const borderColor = progress.interpolate({
     inputRange: [0, 1],
     outputRange: ["rgba(0,224,255,0.25)", "rgba(0,224,255,1)"],
   });
 
-  const shadowOpacity = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.1, 0.75],
-  });
-
-  const scale = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.97, 1.03],
-  });
-
-  const innerGlowOpacity = progress.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [0.2, 0.9, 0.2],
-  });
-
-  // error 状态：简单红框提示
   if (status === "error") {
     return (
       <View
@@ -192,7 +108,6 @@ const PlaceholderCell: React.FC<PlaceholderCellProps> = ({
             <Image
               source={{ uri: thumbUri }}
               style={styles.placeholderBgImage}
-              resizeMode="cover"
               blurRadius={4}
             />
             <View style={styles.placeholderBgDim} />
@@ -205,7 +120,6 @@ const PlaceholderCell: React.FC<PlaceholderCellProps> = ({
     );
   }
 
-  // pending 状态：原图背景 + 昏暗层 + 发光边框 + 呼吸
   return (
     <Animated.View
       style={[
@@ -216,31 +130,22 @@ const PlaceholderCell: React.FC<PlaceholderCellProps> = ({
           borderColor,
           shadowColor: "#00E0FF",
           shadowRadius: 18,
-          shadowOpacity,
+          shadowOpacity: 0.7,
           shadowOffset: { width: 0, height: 0 },
-          transform: [{ scale }],
         },
       ]}
       onLayout={onLayout}
     >
-      {/* 背景：原图 + 一层暗色遮罩 */}
       {thumbUri && (
         <>
           <Image
             source={{ uri: thumbUri }}
             style={styles.placeholderBgImage}
-            resizeMode="cover"
             blurRadius={6}
           />
           <View style={styles.placeholderBgDim} />
         </>
       )}
-
-      {/* 内圈高光边，增加层次感 */}
-      <Animated.View
-        pointerEvents="none"
-        style={[styles.placeholderInnerGlow, { opacity: innerGlowOpacity }]}
-      />
 
       <ActivityIndicator color="#00E0FF" />
       <Text style={styles.placeholderText}>Generating 3D…</Text>
@@ -251,28 +156,29 @@ const PlaceholderCell: React.FC<PlaceholderCellProps> = ({
 /* -------------------------------------------------------------------------- */
 /* 主组件                                                                      */
 /* -------------------------------------------------------------------------- */
-export default function PhotoGrid({
-  assets,
-  loading,
-  threeModels = [],
-  generatingStatus,
-  onPress,
-  onPress3D,
-  onAddPhoto,
-  onLoadMore,
-  onItemLayout,
-}: Props) {
+export default function PhotoGrid(props: Props) {
+  const {
+    assets,
+    loading,
+    threeModels = [],
+    generatingStatus,
+    onPress,
+    onPress3D,
+    onLoadMore,
+    onItemLayout,
+  } = props;
+
+  const insets = useSafeAreaInsets(); // 暂时没用，但保留不动
+
   /* ---------------------------------------------------------------------- */
-  /* Step 1: 整合 gridItems（占位 → 新 3D → 旧 3D → 照片）                  */
+  /* gridItems：整理成照片+3D+占位                                             */
   /* ---------------------------------------------------------------------- */
   const gridItems: GridItem[] = useMemo(() => {
     const items: GridItem[] = [];
-
-    // 建一个 map，方便通过 assetId 拿到原图 uri
     const assetMap = new Map<string, string>();
     assets.forEach((a) => assetMap.set(a.id, a.uri));
 
-    // 1) pending / error / done （done 会直接变 3D 卡片）
+    // placeholder + done(3D)
     Object.entries(generatingStatus).forEach(([assetId, entry]) => {
       if (entry.status === "pending" || entry.status === "error") {
         items.push({
@@ -291,13 +197,13 @@ export default function PhotoGrid({
       }
     });
 
-    // 2) 没被 done 覆盖的老 3D 模型
     const replacedKeys = new Set(
       Object.values(generatingStatus)
         .filter((v) => v.status === "done" && v.model)
-        .map((v) => v.model!.key)
+        .map((v) => (v.model as Sam3DItem).key)
     );
 
+    // 老 3D
     threeModels.forEach((m) => {
       if (!replacedKeys.has(m.key)) {
         items.push({
@@ -309,46 +215,35 @@ export default function PhotoGrid({
       }
     });
 
-    // 3) 照片
+    // 照片
     assets.forEach((a, idx) => {
-      items.push({
-        kind: "photo",
-        id: a.id,
-        uri: a.uri,
-        assetIndex: idx,
-      });
+      items.push({ kind: "photo", id: a.id, uri: a.uri, assetIndex: idx });
     });
 
     return items;
   }, [assets, threeModels, generatingStatus]);
 
   /* ---------------------------------------------------------------------- */
-  /* Step 2: 用 UIManager.measure 计算绝对坐标                               */
+  /* Layout measurement for animation                                        */
   /* ---------------------------------------------------------------------- */
   const measureLayout = (item: GridItem, target: any) => {
     const node = findNodeHandle(target);
     if (!node) return;
 
-    UIManager.measure(node, (x, y, width, height, pageX, pageY) => {
-      onItemLayout?.(item, {
-        x: pageX,
-        y: pageY,
-        width,
-        height,
-      });
+    UIManager.measure(node, (x, y, w, h, pageX, pageY) => {
+      onItemLayout?.(item, { x: pageX, y: pageY, width: w, height: h });
     });
   };
 
   /* ---------------------------------------------------------------------- */
-  /* 渲染每个格子                                                              */
+  /* renderItem                                                              */
   /* ---------------------------------------------------------------------- */
   const renderItem = ({ item }: { item: GridItem }) => {
-    // Photo
     if (item.kind === "photo") {
       return (
         <TouchableOpacity
           style={styles.item}
-          onPress={() => onPress(item.assetIndex)}
+          onPress={() => props.onPress(item.assetIndex)}
           onLayout={(e) => measureLayout(item, e.target)}
         >
           <Image source={{ uri: item.uri }} style={styles.image} />
@@ -356,18 +251,17 @@ export default function PhotoGrid({
       );
     }
 
-    // 3D model
     if (item.kind === "3d") {
-      const modelIndex = threeModels.findIndex((m) => m.url === item.glbUrl);
-      const model = modelIndex >= 0 ? threeModels[modelIndex] : undefined;
+      const idx = threeModels.findIndex((m) => m.url === item.glbUrl);
+      const model = idx >= 0 ? threeModels[idx] : undefined;
 
       return (
         <TouchableOpacity
           style={styles.item}
-          onPress={() => model && onPress3D?.(model, modelIndex)}
+          onPress={() => model && props.onPress3D?.(model, idx)}
           onLayout={(e) => measureLayout(item, e.target)}
         >
-          <Mini3DPreview glbUrl={item.glbUrl} />
+          <MiniModelViewer glb={item.glbUrl} />
           <View style={styles.model3dBadge}>
             <Ionicons name="cube-outline" size={14} color="#4D4D4D" />
           </View>
@@ -375,49 +269,75 @@ export default function PhotoGrid({
       );
     }
 
-    // placeholder
-    if (item.kind === "placeholder") {
-      return (
-        <PlaceholderCell
-          status={item.status}
-          thumbUri={item.thumbUri}
-          onLayout={(e) => measureLayout(item, e.target)}
-        />
-      );
-    }
-
-    return null;
+    return (
+      <PlaceholderCell
+        status={item.status}
+        thumbUri={item.thumbUri}
+        onLayout={(e: any) => measureLayout(item, e.target)}
+      />
+    );
   };
 
   /* ---------------------------------------------------------------------- */
-  /* Skeleton                                                                */
-  /* ---------------------------------------------------------------------- */
-  if (loading && gridItems.length === 0) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator />
-        <Text style={styles.centerText}>Loading photos…</Text>
-      </View>
-    );
-  }
-
-  /* ---------------------------------------------------------------------- */
-  /* Main render                                                             */
+  /* Main render                                                              */
   /* ---------------------------------------------------------------------- */
   return (
-    <SafeAreaView style={{ flex: 1}}>
-      <View>
+    <SafeAreaView style={{ flex: 1 }} edges={["left", "right", "bottom"]}>
+      <View style={{ flex: 1 }}>
+        {/* ⭐ 固定在顶部的标题 + 渐变背景（覆盖在网格上） */}
+        <View style={styles.headerWrapper}>
+          <LinearGradient
+            colors={[
+              "rgba(0,0,0,0.40)", // 顶部：淡淡灰黑
+              "rgba(0,0,0,0.32)",
+              "rgba(0,0,0,0.24)",
+              "rgba(0,0,0,0.16)",
+              "rgba(0,0,0,0.08)",
+              "rgba(0,0,0,0.0)",
+            ]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={styles.headerGradient}
+          />
+
+          {/* 标题 + 统计 + 右侧「+」按钮 */}
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={styles.headerTitle}>Library</Text>
+              <Text style={styles.headerCount}>
+                {gridItems.length} items
+              </Text>
+            </View>
+
+            {/* <TouchableOpacity
+              style={styles.addBtn}
+              onPress={props.onAddPhoto}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="add" size={20} color="#111" />
+            </TouchableOpacity> */}
+          </View>
+        </View>
+
+        {/* 下方网格滚动，内容在 header 背后经过 */}
         <FlatList
           data={gridItems}
-          numColumns={3}
-          keyExtractor={(item) => {
-            if (item.kind === "photo") return `photo-${item.id}`;
-            if (item.kind === "3d") return `3d-${item.id}`;
-            return `placeholder-${item.assetId}`;
-          }}
+          key={NUM_COLUMNS}              // ⭐ 列数变动时强制重建列表
+          numColumns={NUM_COLUMNS}
+          keyExtractor={(item) =>
+            item.kind === "photo"
+              ? `photo-${item.id}`
+              : item.kind === "3d"
+              ? `3d-${item.id}`
+              : `placeholder-${item.assetId}`
+          }
           renderItem={renderItem}
-          onEndReached={onLoadMore}
+          onEndReached={props.onLoadMore}
           onEndReachedThreshold={0.4}
+          contentContainerStyle={{
+            paddingTop: HEADER_HEIGHT + 8, // ⭐ 给顶部留出 header 的空间
+            paddingBottom: 12,
+          }}
         />
       </View>
     </SafeAreaView>
@@ -427,43 +347,76 @@ export default function PhotoGrid({
 /* -------------------------------------------------------------------------- */
 /* Styles                                                                     */
 /* -------------------------------------------------------------------------- */
-
 const styles = StyleSheet.create({
+  /* Header：绝对定位，盖在最上层，背景透明 */
+  headerWrapper: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: HEADER_HEIGHT + 40,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    justifyContent: "flex-end",
+    backgroundColor: "transparent",
+    overflow: "hidden",
+    zIndex: 10,
+    pointerEvents: "none", // ⭐ 不挡下面网格的点击
+  },
+
+  headerGradient: {
+    ...StyleSheet.absoluteFillObject,
+  },
+
+  // 标题 + 按钮排一行
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    pointerEvents: "auto", // ❗ 允许点击「+」按钮
+  },
+
+  headerTitle: {
+    fontSize: 32,
+    fontWeight: "900",
+    color: "#fff",
+  },
+  headerCount: {
+    marginTop: 4,
+    fontSize: 13,
+    fontWeight: "900",
+    color: "#fff",
+  },
+
+  addBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  /* Grid item */
   item: {
     width: SIZE,
     height: SIZE,
     margin: 2,
     borderRadius: 10,
     overflow: "hidden",
-    backgroundColor: "#111",
   },
-
   image: { width: "100%", height: "100%" },
 
-  /* placeholder */
+  /* Placeholder */
   placeholderBox: {
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "#050505",
   },
-  // 背景用原图
-  placeholderBgImage: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  // 压暗原图
+  placeholderBgImage: { ...StyleSheet.absoluteFillObject },
   placeholderBgDim: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.55)",
-  },
-  placeholderInnerGlow: {
-    position: "absolute",
-    left: 4,
-    top: 4,
-    right: 4,
-    bottom: 4,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: "rgba(0,224,255,0.7)",
   },
   placeholderError: {
     borderWidth: 2,
@@ -485,48 +438,14 @@ const styles = StyleSheet.create({
     height: 20,
     justifyContent: "center",
     alignItems: "center",
-    borderRadius: "50%",
-  },
-  model3dBadgeText: {
-    color: "#fff",
-    fontSize: 10,
-    fontWeight: "600",
+    borderRadius: 50,
   },
 
-  model3dNameBar: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    backgroundColor: "rgba(0,0,0,0.55)",
-  },
-  model3dName: { color: "#fff", fontSize: 11 },
-
-  /* center loading */
+  /* Center loading */
   center: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
   },
   centerText: { marginTop: 8, color: "#fff" },
-
-  /* FAB */
-  fab: {
-    position: "absolute",
-    bottom: 40,
-    right: 20,
-    width: 58,
-    height: 58,
-    borderRadius: 30,
-    backgroundColor: "#1e90ff",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  fabText: {
-    fontSize: 30,
-    color: "#fff",
-    marginTop: -2,
-  },
 });
