@@ -3,7 +3,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import EvilIcons from "@expo/vector-icons/EvilIcons";
 import { DeviceMotion } from "expo-sensors";
 import React, { useEffect, useRef } from "react";
-import { Animated, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Animated, Dimensions, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 import { useRouter } from "expo-router";
 import { WebView } from "react-native-webview";
@@ -38,71 +38,85 @@ export default function ModelViewer3D({
   }, [startLoadAnim]);
 
   // 陀螺仪控制
-  useEffect(() => {
-    let subscription: { remove: () => void } | null = null;
+// 陀螺仪控制（修复 iPad 横屏方向）
+useEffect(() => {
+  let subscription: { remove: () => void } | null = null;
 
-    const MAX_YAW = 30;
-    const MAX_PITCH = 20;
+  const MAX_YAW = 30;
+  const MAX_PITCH = 20;
+  const rad2deg = (rad: number) => (rad * 180) / Math.PI;
 
-    const rad2deg = (rad: number) => (rad * 180) / Math.PI;
+  const base = { yaw0: 0, pitch0: 0, inited: false };
 
-    const base = {
-      yaw0: 0,
-      pitch0: 0,
-      inited: false,
-    };
+  const isIPad =
+    Platform.OS === "ios" &&
+    (Platform as any).isPad;
 
-    const subscribe = async () => {
-      DeviceMotion.setUpdateInterval(50);
+  // 判断当前是否横屏
+  const getOrientation = () => {
+    const { width, height } = Dimensions.get("window");
+    return width > height ? "landscape" : "portrait";
+  };
+  let orientation = getOrientation();
 
-      subscription = DeviceMotion.addListener((data) => {
-        const { rotation } = data;
-        if (!rotation) return;
+  const dimSub = Dimensions.addEventListener("change", () => {
+    orientation = getOrientation();
+  });
 
-        const beta = rotation.beta ?? 0;
-        const gamma = rotation.gamma ?? 0;
+  DeviceMotion.setUpdateInterval(50);
 
-        let yaw = rad2deg(gamma);
-        let pitch = -rad2deg(beta);
+  subscription = DeviceMotion.addListener((data) => {
+    const { rotation } = data;
+    if (!rotation) return;
 
-        if (!base.inited) {
-          base.yaw0 = yaw;
-          base.pitch0 = pitch;
-          base.inited = true;
-          return;
-        }
+    const beta = rotation.beta ?? 0;   // X 轴旋转
+    const gamma = rotation.gamma ?? 0; // Y 轴旋转
 
-        yaw = (yaw - base.yaw0) * 0.75;
-        pitch = (pitch - base.pitch0) * 0.75;
+    let yawRaw: number;
+    let pitchRaw: number;
 
-        yaw = Math.max(-MAX_YAW, Math.min(MAX_YAW, yaw));
-        pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, pitch));
+    if (isIPad && orientation === "landscape") {
+      // ⭐ iPad 横屏，这里轴映射和竖屏不同
+      yawRaw = rad2deg(beta);        // 左右晃动主要体现在 beta
+      pitchRaw = -rad2deg(gamma);    // 上下晃动主要体现在 gamma
+      yawRaw *= -1;                  // ⭐ 水平反转，符合直觉
+    } else {
+      // iPhone & iPad 竖屏（原逻辑）
+      yawRaw = rad2deg(gamma);
+      pitchRaw = -rad2deg(beta);
+    }
 
-        const now = Date.now();
-        if (now - lastInjectRef.current < 50) return;
-        lastInjectRef.current = now;
+    if (!base.inited) {
+      base.yaw0 = yawRaw;
+      base.pitch0 = pitchRaw;
+      base.inited = true;
+      return;
+    }
 
-        if (webviewRef.current) {
-          const js = `
-            if (window.updateCameraFromRN) {
-              window.updateCameraFromRN(${yaw.toFixed(2)}, ${pitch.toFixed(
-            2
-          )});
-            }
-            true;
-          `;
-          // @ts-ignore
-          webviewRef.current.injectJavaScript(js);
-        }
-      });
-    };
+    let yaw = (yawRaw - base.yaw0) * 0.75;
+    let pitch = (pitchRaw - base.pitch0) * 0.75;
 
-    subscribe();
+    yaw = Math.max(-MAX_YAW, Math.min(MAX_YAW, yaw));
+    pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, pitch));
 
-    return () => {
-      subscription && subscription.remove();
-    };
-  }, [webviewRef]);
+    const now = Date.now();
+    if (now - lastInjectRef.current < 50) return;
+    lastInjectRef.current = now;
+
+    if (webviewRef.current) {
+      const js = `
+        window.updateCameraFromRN?.(${yaw.toFixed(2)}, ${pitch.toFixed(2)});
+        true;
+      `;
+      webviewRef.current.injectJavaScript(js);
+    }
+  });
+
+  return () => {
+    subscription?.remove();
+    dimSub?.remove?.();
+  };
+}, [webviewRef]);
 
   const html = `
   <html>

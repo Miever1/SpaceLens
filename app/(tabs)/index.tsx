@@ -217,7 +217,7 @@ export default function AlbumTab() {
             active3DModel?.url ??
             "https://miever.s3.ap-east-1.amazonaws.com/static/projects/Sofa_01_4k-1.glb"
           }
-          usdz="https://miever.s3.ap-east-1.amazonaws.com/static/projects/3d/model_model_20EDD480-D70D-4AE5-8E9B-2B455BFAA636_L0_001_20251129-022109_b7ffd79b.usdz"
+          usdz="https://miever.s3.ap-east-1.amazonaws.com/static/projects/3d/model_model_7DFD31BA-4904-4A9D-AB4E-1577EA7AC3B8_L0_001_20251130-202734_ae7003a0.usdz"
           onClose={() => setShowAR(false)}
         />
       )}

@@ -1,7 +1,7 @@
 // components/three/MiniModelViewer.tsx
 import { DeviceMotion } from "expo-sensors";
 import React, { useEffect, useRef } from "react";
-import { StyleSheet, View } from "react-native";
+import { Dimensions, Platform, StyleSheet, View } from "react-native";
 import { WebView } from "react-native-webview";
 
 export default function MiniModelViewer({
@@ -104,27 +104,53 @@ export default function MiniModelViewer({
 
     const base = { yaw0: 0, pitch0: 0, inited: false };
 
+    const isIPad = Platform.OS === "ios" && (Platform as any).isPad;
+
+    // 当前方向：竖屏 / 横屏
+    const getOrientation = () => {
+      const { width, height } = Dimensions.get("window");
+      return width > height ? "landscape" : "portrait";
+    };
+    let orientation: "portrait" | "landscape" = getOrientation();
+
+    const dimSub = Dimensions.addEventListener("change", ({ window }) => {
+      orientation = window.width > window.height ? "landscape" : "portrait";
+    });
+
     DeviceMotion.setUpdateInterval(80);
 
     sub = DeviceMotion.addListener((data) => {
       const { rotation } = data;
       if (!rotation) return;
 
-      const beta = rotation.beta ?? 0;
-      const gamma = rotation.gamma ?? 0;
+      const beta = rotation.beta ?? 0;   // X 轴
+      const gamma = rotation.gamma ?? 0; // Y 轴
 
-      let yaw = rad2deg(gamma);
-      let pitch = -rad2deg(beta);
+      const isLandscape = orientation === "landscape";
+
+      let yawRaw: number;
+      let pitchRaw: number;
+
+      if (isIPad && isLandscape) {
+        // 👉 iPad 横屏：轴向跟竖屏不一样
+        yawRaw = rad2deg(beta);      // 左右
+        pitchRaw = -rad2deg(gamma);  // 上下
+        yawRaw *= -1;                // 水平反一下，手感更像手机竖屏
+      } else {
+        // iPhone / 竖屏 iPad：沿用原来逻辑
+        yawRaw = rad2deg(gamma);
+        pitchRaw = -rad2deg(beta);
+      }
 
       if (!base.inited) {
-        base.yaw0 = yaw;
-        base.pitch0 = pitch;
+        base.yaw0 = yawRaw;
+        base.pitch0 = pitchRaw;
         base.inited = true;
         return;
       }
 
-      yaw = (yaw - base.yaw0) * 0.7;
-      pitch = (pitch - base.pitch0) * 0.7;
+      let yaw = (yawRaw - base.yaw0) * 0.7;
+      let pitch = (pitchRaw - base.pitch0) * 0.7;
 
       yaw = Math.max(-MAX_YAW, Math.min(MAX_YAW, yaw));
       pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, pitch));
@@ -142,7 +168,11 @@ export default function MiniModelViewer({
       }
     });
 
-    return () => sub?.remove();
+    return () => {
+      sub?.remove();
+      // 兼容新老 RN 的 Dimensions API
+      (dimSub as any)?.remove?.();
+    };
   }, []);
 
   return (

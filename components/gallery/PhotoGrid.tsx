@@ -2,7 +2,7 @@ import type { Sam3DItem } from "@/api/sam3d";
 import type { MyAsset } from "@/hooks/usePhotoAssets";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -19,17 +19,15 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import MiniModelViewer from "../three/MiniModelViewer";
 
-const { width } = Dimensions.get("window");
+// 用 window 宽度做一个初始值，真正的宽度用 onLayout 再更新
+const INITIAL_WIDTH = Dimensions.get("window").width;
 
 // 不同宽度下自动调列数
-const getNumColumns = () => {
-  if (width >= 1024) return 5;  // iPad 横屏
-  if (width >= 768) return 4;   // iPad 竖屏
-  return 3;                     // iPhone
+const getNumColumns = (width: number) => {
+  if (width >= 1024) return 5; // iPad 横屏
+  if (width >= 768) return 3;  // iPad 竖屏
+  return 3;                    // iPhone
 };
-
-const NUM_COLUMNS = getNumColumns();
-const SIZE = width / NUM_COLUMNS - 5;
 
 // ⭐ 顶部标题区域高度（FlatList 用它来 paddingTop）
 const HEADER_HEIGHT = 80;
@@ -71,7 +69,17 @@ type Props = {
 /* -------------------------------------------------------------------------- */
 /* 占位格子：原图背景 + 发光呼吸边框                                         */
 /* -------------------------------------------------------------------------- */
-const PlaceholderCell = ({ status, thumbUri, onLayout }: any) => {
+const PlaceholderCell = ({
+  status,
+  thumbUri,
+  onLayout,
+  size,
+}: {
+  status: "pending" | "error";
+  thumbUri?: string;
+  onLayout?: (ev: any) => void;
+  size: number;
+}) => {
   const progress = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -100,7 +108,12 @@ const PlaceholderCell = ({ status, thumbUri, onLayout }: any) => {
   if (status === "error") {
     return (
       <View
-        style={[styles.item, styles.placeholderBox, styles.placeholderError]}
+        style={[
+          styles.item,
+          { width: size, height: size },
+          styles.placeholderBox,
+          styles.placeholderError,
+        ]}
         onLayout={onLayout}
       >
         {thumbUri && (
@@ -124,6 +137,7 @@ const PlaceholderCell = ({ status, thumbUri, onLayout }: any) => {
     <Animated.View
       style={[
         styles.item,
+        { width: size, height: size },
         styles.placeholderBox,
         {
           borderWidth: 3.5,
@@ -170,6 +184,19 @@ export default function PhotoGrid(props: Props) {
 
   const insets = useSafeAreaInsets(); // 暂时没用，但保留不动
 
+  // 👉 实际可用宽度，来自容器 onLayout
+  const [listWidth, setListWidth] = useState(INITIAL_WIDTH);
+
+  const numColumns = useMemo(
+    () => getNumColumns(listWidth),
+    [listWidth]
+  );
+
+  const itemSize = useMemo(
+    () => listWidth / numColumns - 5,
+    [listWidth, numColumns]
+  );
+
   /* ---------------------------------------------------------------------- */
   /* gridItems：整理成照片+3D+占位                                             */
   /* ---------------------------------------------------------------------- */
@@ -203,8 +230,9 @@ export default function PhotoGrid(props: Props) {
         .map((v) => (v.model as Sam3DItem).key)
     );
 
-    // 老 3D
+    // 老 3D（过滤 usdz）
     threeModels.forEach((m) => {
+      if (m.url.endsWith(".usdz")) return;
       if (!replacedKeys.has(m.key)) {
         items.push({
           kind: "3d",
@@ -242,7 +270,7 @@ export default function PhotoGrid(props: Props) {
     if (item.kind === "photo") {
       return (
         <TouchableOpacity
-          style={styles.item}
+          style={[styles.item, { width: itemSize, height: itemSize }]}
           onPress={() => props.onPress(item.assetIndex)}
           onLayout={(e) => measureLayout(item, e.target)}
         >
@@ -257,7 +285,7 @@ export default function PhotoGrid(props: Props) {
 
       return (
         <TouchableOpacity
-          style={styles.item}
+          style={[styles.item, { width: itemSize, height: itemSize }]}
           onPress={() => model && props.onPress3D?.(model, idx)}
           onLayout={(e) => measureLayout(item, e.target)}
         >
@@ -273,6 +301,7 @@ export default function PhotoGrid(props: Props) {
       <PlaceholderCell
         status={item.status}
         thumbUri={item.thumbUri}
+        size={itemSize}
         onLayout={(e: any) => measureLayout(item, e.target)}
       />
     );
@@ -283,7 +312,15 @@ export default function PhotoGrid(props: Props) {
   /* ---------------------------------------------------------------------- */
   return (
     <SafeAreaView style={{ flex: 1 }} edges={["left", "right", "bottom"]}>
-      <View style={{ flex: 1 }}>
+      <View
+        style={{ flex: 1 }}
+        onLayout={(e) => {
+          const w = e.nativeEvent.layout.width;
+          if (w > 0) {
+            setListWidth(w);
+          }
+        }}
+      >
         {/* ⭐ 固定在顶部的标题 + 渐变背景（覆盖在网格上） */}
         <View style={styles.headerWrapper}>
           <LinearGradient
@@ -322,8 +359,8 @@ export default function PhotoGrid(props: Props) {
         {/* 下方网格滚动，内容在 header 背后经过 */}
         <FlatList
           data={gridItems}
-          key={NUM_COLUMNS}              // ⭐ 列数变动时强制重建列表
-          numColumns={NUM_COLUMNS}
+          key={numColumns}              // ⭐ 列数变动时强制重建列表
+          numColumns={numColumns}
           keyExtractor={(item) =>
             item.kind === "photo"
               ? `photo-${item.id}`
@@ -335,7 +372,7 @@ export default function PhotoGrid(props: Props) {
           onEndReached={props.onLoadMore}
           onEndReachedThreshold={0.4}
           contentContainerStyle={{
-            paddingTop: HEADER_HEIGHT + 8, // ⭐ 给顶部留出 header 的空间
+            paddingTop: HEADER_HEIGHT + 8,
             paddingBottom: 12,
           }}
         />
@@ -397,10 +434,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  /* Grid item */
+  /* Grid item：不再在这里写死 width / height，用 size 动态传 */
   item: {
-    width: SIZE,
-    height: SIZE,
     margin: 2,
     borderRadius: 10,
     overflow: "hidden",
