@@ -216,6 +216,7 @@ export default function AlbumTab() {
             active3DModel?.url ??
             "https://miever.s3.ap-east-1.amazonaws.com/static/projects/Sofa_01_4k-1.glb"
           }
+          usdz="https://miever.s3.ap-east-1.amazonaws.com/static/projects/3d/model_model_20EDD480-D70D-4AE5-8E9B-2B455BFAA636_L0_001_20251129-022109_b7ffd79b.usdz"
           onClose={() => setShowAR(false)}
         />
       )}
@@ -232,5 +233,5 @@ export default function AlbumTab() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000" },
+  container: { flex: 1, backgroundColor: "#fff" },
 });

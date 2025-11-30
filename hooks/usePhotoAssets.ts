@@ -8,6 +8,7 @@ export type MyAsset = {
   uri: string;
   width: number;   // ✅ 新增
   height: number;  // ✅ 新增
+  usdz?: string; // ✅ 可选的 usdz 字段
 };
 
 export default function usePhotoAssets(limit: number = 20) {

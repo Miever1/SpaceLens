@@ -1,5 +1,6 @@
 import type { Sam3DItem } from "@/api/sam3d";
 import type { MyAsset } from "@/hooks/usePhotoAssets";
+import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef } from "react";
 import {
   ActivityIndicator,
@@ -14,6 +15,7 @@ import {
   UIManager,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 
 const { width } = Dimensions.get("window");
@@ -80,18 +82,29 @@ const Mini3DPreview = ({ glbUrl }: { glbUrl: string }) => {
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
         <style>
-          html, body { margin:0; padding:0; background:#000; overflow:hidden; }
-          model-viewer { width:100%; height:100%; background:#000; }
+          html, body {
+            margin:0;
+            padding:0;
+            background:#eee;
+            overflow:hidden;
+          }
+          model-viewer {
+            width:100%;
+            height:100%;
+            background:#eee;
+          }
         </style>
       </head>
       <body>
         <model-viewer
           src="${glbUrl}"
           auto-rotate
-          camera-controls="false"
           rotation-per-second="25deg"
           shadow-intensity="0.6"
           exposure="1.0"
+          disable-tap
+          disable-zoom
+          disable-pan
         ></model-viewer>
       </body>
     </html>
@@ -102,7 +115,12 @@ const Mini3DPreview = ({ glbUrl }: { glbUrl: string }) => {
       source={{ html }}
       originWhitelist={["*"]}
       scrollEnabled={false}
+      // 关键：让所有触摸事件穿透给外面的 TouchableOpacity
+      pointerEvents="none"
       style={styles.image}
+      onError={(e) => {
+    console.warn("Mini3DPreview webview error", e.nativeEvent);
+  }}
     />
   );
 };
@@ -351,12 +369,7 @@ export default function PhotoGrid({
         >
           <Mini3DPreview glbUrl={item.glbUrl} />
           <View style={styles.model3dBadge}>
-            <Text style={styles.model3dBadgeText}>3D</Text>
-          </View>
-          <View style={styles.model3dNameBar}>
-            <Text numberOfLines={1} style={styles.model3dName}>
-              {item.name}
-            </Text>
+            <Ionicons name="cube-outline" size={14} color="#4D4D4D" />
           </View>
         </TouchableOpacity>
       );
@@ -392,26 +405,22 @@ export default function PhotoGrid({
   /* Main render                                                             */
   /* ---------------------------------------------------------------------- */
   return (
-    <View style={{ flex: 1, paddingTop: 60 }}>
-      <FlatList
-        data={gridItems}
-        numColumns={3}
-        keyExtractor={(item) => {
-          if (item.kind === "photo") return `photo-${item.id}`;
-          if (item.kind === "3d") return `3d-${item.id}`;
-          return `placeholder-${item.assetId}`;
-        }}
-        renderItem={renderItem}
-        onEndReached={onLoadMore}
-        onEndReachedThreshold={0.4}
-        contentContainerStyle={styles.listContent}
-      />
-
-      {/* Add Photo */}
-      <TouchableOpacity style={styles.fab} onPress={onAddPhoto}>
-        <Text style={styles.fabText}>＋</Text>
-      </TouchableOpacity>
-    </View>
+    <SafeAreaView style={{ flex: 1}}>
+      <View>
+        <FlatList
+          data={gridItems}
+          numColumns={3}
+          keyExtractor={(item) => {
+            if (item.kind === "photo") return `photo-${item.id}`;
+            if (item.kind === "3d") return `3d-${item.id}`;
+            return `placeholder-${item.assetId}`;
+          }}
+          renderItem={renderItem}
+          onEndReached={onLoadMore}
+          onEndReachedThreshold={0.4}
+        />
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -420,8 +429,6 @@ export default function PhotoGrid({
 /* -------------------------------------------------------------------------- */
 
 const styles = StyleSheet.create({
-  listContent: { padding: 2 },
-
   item: {
     width: SIZE,
     height: SIZE,
@@ -473,10 +480,12 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 4,
     left: 4,
-    backgroundColor: "#3FA8FF",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
+    backgroundColor: "rgba(0,0,0,0.1)",
+    width: 20,
+    height: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    borderRadius: "50%",
   },
   model3dBadgeText: {
     color: "#fff",

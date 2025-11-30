@@ -1,4 +1,8 @@
 // components/gallery/PhotoDetail.tsx
+import type { SamPoint } from "@/api/sam3d";
+import type { FromRect } from "@/app/(tabs)";
+import type { MyAsset } from "@/hooks/usePhotoAssets";
+import { EvilIcons } from "@expo/vector-icons";
 import MaskedView from "@react-native-masked-view/masked-view";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -13,10 +17,8 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
-import type { SamPoint } from "@/api/sam3d";
-import type { FromRect } from "@/app/(tabs)";
-import type { MyAsset } from "@/hooks/usePhotoAssets";
+import ShareButton from "../common/ShareButton";
+import ScreenShell from "../layout/ScreenShell";
 import { usePhotoActions } from "./hooks/usePhotoActions";
 
 const { width: screenW, height: screenH } = Dimensions.get("window");
@@ -68,12 +70,10 @@ const BubbleMenu: React.FC<BubbleMenuProps> = ({
   </View>
 );
 
-/* ---------------- 只在选中区域内部渲染特效 ---------------- */
+/* ---------------- 选区内特效 ---------------- */
 
 const SegPreviewOverlay = ({ maskUri }: { maskUri: string }) => {
-  // 主呼吸动画 0 → 1 → 0
   const pulse = useRef(new Animated.Value(0)).current;
-  // 斜向高光的位移
   const shimmer = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -115,19 +115,16 @@ const SegPreviewOverlay = ({ maskUri }: { maskUri: string }) => {
     };
   }, [pulse, shimmer]);
 
-  // 区域填充透明度：很轻微的呼吸
   const fillOpacity = pulse.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.10, 0.22],
+    outputRange: [0.1, 0.22],
   });
 
-  // 边缘 glow 强度
   const glowRadius = pulse.interpolate({
     inputRange: [0, 1],
     outputRange: [8, 18],
   });
 
-  // 斜向高光的位置
   const shimmerTranslate = shimmer.interpolate({
     inputRange: [0, 1],
     outputRange: [-screenW, screenW],
@@ -145,7 +142,7 @@ const SegPreviewOverlay = ({ maskUri }: { maskUri: string }) => {
         />
       }
     >
-      {/* 1. 选区内淡淡的青色内发光 */}
+      {/* 区域内淡青色填充 */}
       <Animated.View
         style={[
           StyleSheet.absoluteFill,
@@ -156,7 +153,7 @@ const SegPreviewOverlay = ({ maskUri }: { maskUri: string }) => {
         ]}
       />
 
-      {/* 2. 边缘柔和的高光描边 */}
+      {/* 边缘 glow */}
       <Animated.View
         style={[
           styles.segGlow,
@@ -166,7 +163,7 @@ const SegPreviewOverlay = ({ maskUri }: { maskUri: string }) => {
         ]}
       />
 
-      {/* 3. 非常轻的斜向高光刷过一下 */}
+      {/* 斜向高光刷过 */}
       <Animated.View
         style={[
           styles.segShimmer,
@@ -257,7 +254,7 @@ export default function PhotoDetail({
 
   const currentAsset = assets[index];
   const isSegmenting = !!segmentingId;
-   const canGenerate =
+  const canGenerate =
     !!(segMaskUri || segPreviewUri) &&
     segAssetId === currentAsset.id &&
     !segmentingId;
@@ -303,8 +300,6 @@ export default function PhotoDetail({
   };
 
   const handleMake3D = () => {
-    console.log("Make 3D clicked for", currentAsset.id);
-
     let fromRect: FromRect | undefined;
     if (imgLayout) {
       fromRect = {
@@ -332,168 +327,206 @@ export default function PhotoDetail({
     onClose();
   };
 
-  return (
-    <View style={styles.container}>
-      {/* Back */}
-      <TouchableOpacity style={styles.backBtn} onPress={onClose}>
-        <Text style={styles.backText}>‹ Back</Text>
-      </TouchableOpacity>
+  /* ---------------- 底部栏内容 ---------------- */
 
-      {/* Page counter */}
-      <View style={styles.counterWrapper}>
-        <Text style={styles.counterText}>
-          {index + 1} / {assets.length}
-        </Text>
-      </View>
-
-      {/* 主图分页 */}
-      <FlatList
-        data={assets}
-        horizontal
-        pagingEnabled
-        initialScrollIndex={index}
-        showsHorizontalScrollIndicator={false}
-        keyExtractor={(i) => i.id}
-        getItemLayout={(_, i) => ({
-          length: screenW,
-          offset: screenW * i,
-          index: i,
-        })}
-        onMomentumScrollEnd={(e) => {
-          const newIndex = Math.floor(e.nativeEvent.contentOffset.x / screenW);
-          onChangeIndex(newIndex);
-          setBubbleVisible(false);
+  const bottomSlot = (
+    <View style={styles.bottomBarInner}>
+      <TouchableOpacity
+        style={styles.bottomShareBtn}
+        onPress={() => {
+          console.log("TODO: share photo");
         }}
-        renderItem={({ item }) => {
-  const pts = points[item.id] ?? [];
-  const isSeg = segAssetId === item.id;
+      >
+        <EvilIcons name="share-apple" size={24} color="black" />
+      </TouchableOpacity>
+    </View>
+  );
+
+  const handleShare = () => {
+    // TODO: 这里后面接系统分享逻辑
+    console.log("share current photo:", currentAsset.uri);
+  };
+
+  /* ---------------- 渲染 ---------------- */
 
   return (
-    <Pressable
-      style={styles.itemWrapper}
-      onLongPress={(e) => onLongPress(e, item)}
-      onPress={() => setBubbleVisible(false)}
+    <ScreenShell
+      title="Photo"
+      onBack={onClose}
+      rightSlot={
+        <ShareButton
+          onPress={handleShare}
+          size={36}
+          // header 背景是白色，用 light 主题
+          theme="light"
+        />
+      }
+      bottomSlot={bottomSlot}
     >
-      {/* 1. 背景原图 */}
-      <Image
-        source={{ uri: item.uri }}
-        style={styles.image}
-        resizeMode="contain"
-        onLayout={(ev) =>
-          setImgLayout({
-            x: ev.nativeEvent.layout.x,
-            y: ev.nativeEvent.layout.y,
-            width: ev.nativeEvent.layout.width,
-            height: ev.nativeEvent.layout.height,
-          })
-        }
-      />
+      {/* 中间内容区域：FlatList + 各种 overlay，只覆盖内容区，不挡住 header/bottom */}
+      <View style={styles.content}>
+        <FlatList
+  data={assets}
+  horizontal
+  pagingEnabled
+  initialScrollIndex={index}
+  showsHorizontalScrollIndicator={false}
+  keyExtractor={(item) => item.id}
+  getItemLayout={(_, i) => ({
+    length: screenW,
+    offset: screenW * i,
+    index: i,
+  })}
+  onMomentumScrollEnd={(e) => {
+    const newIndex = Math.floor(e.nativeEvent.contentOffset.x / screenW);
+    onChangeIndex(newIndex);
+    setBubbleVisible(false);
+  }}
+  renderItem={({ item }) => {
+    const pts = points[item.id] ?? [];
+    const isSeg = segAssetId === item.id;
 
-      {/* 2. 后端可视化图：暗背景 + 绿边，放中间当参照 */}
-      {isSeg && segPreviewUri && (
+    return (
+      <Pressable
+        style={styles.itemWrapper}
+        onLongPress={(e) => onLongPress(e, item)}
+        onPress={() => setBubbleVisible(false)}
+      >
         <Image
-          source={{ uri: segPreviewUri }}
-          style={styles.segOverlayImage}
+          source={{ uri: item.uri }}
+          style={styles.image}
           resizeMode="contain"
+          onLayout={(ev) =>
+            setImgLayout({
+              x: ev.nativeEvent.layout.x,
+              y: ev.nativeEvent.layout.y,
+              width: ev.nativeEvent.layout.width,
+              height: ev.nativeEvent.layout.height,
+            })
+          }
         />
-      )}
 
-      {/* 3. 顶层特效：只在 mask 内部显示 */}
-      {isSeg && segMaskUri && <SegPreviewOverlay maskUri={segMaskUri} />}
+        {isSeg && segPreviewUri && (
+          <Image
+            source={{ uri: segPreviewUri }}
+            style={styles.segOverlayImage}
+            resizeMode="contain"
+          />
+        )}
 
-      {/* 4. 点标记 */}
-      {imgLayout && pts.length > 0 && (
-        <PointsOverlay points={pts} asset={item} imgLayout={imgLayout} />
-      )}
-    </Pressable>
-  );
-}}
-      />
+        {isSeg && segMaskUri && <SegPreviewOverlay maskUri={segMaskUri} />}
 
-      {/* 分割 loading 遮罩 */}
-      {isSegmenting && (
-        <View style={styles.loadingMask}>
-          <ActivityIndicator color="#fff" />
-          <Text style={styles.loadingText}>Segmenting…</Text>
-        </View>
-      )}
+        {imgLayout && pts.length > 0 && (
+          <PointsOverlay points={pts} asset={item} imgLayout={imgLayout} />
+        )}
+      </Pressable>
+    );
+  }}
+/>
 
-      {/* 长按水波纹 */}
-      {ripplePos && (
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.ripple,
-            {
-              left: ripplePos.x - 90,
-              top: ripplePos.y - 90,
-              opacity: rippleOpacity,
-              transform: [{ scale: rippleScale }],
-            },
-          ]}
-        />
-      )}
+        {/* 分割 loading 遮罩（只盖内容区域） */}
+        {isSegmenting && (
+          <View style={styles.loadingMask}>
+            <ActivityIndicator color="#fff" />
+            <Text style={styles.loadingText}>Segmenting…</Text>
+          </View>
+        )}
 
-      {/* 气泡菜单 */}
-      {bubbleVisible && (
-        <BubbleMenu
-          pos={bubblePos}
-          canGenerate={canGenerate}
-          onReset={() => resetPoints(currentAsset.id)}
-          onMake3D={handleMake3D}
-          onDismiss={() => setBubbleVisible(false)}
-        />
-      )}
-    </View>
+        {/* 长按水波纹 */}
+        {ripplePos && (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.ripple,
+              {
+                left: ripplePos.x - 90,
+                top: ripplePos.y - 90,
+                opacity: rippleOpacity,
+                transform: [{ scale: rippleScale }],
+              },
+            ]}
+          />
+        )}
+
+        {/* 气泡菜单 */}
+        {bubbleVisible && (
+          <BubbleMenu
+            pos={bubblePos}
+            canGenerate={canGenerate}
+            onReset={() => resetPoints(currentAsset.id)}
+            onMake3D={handleMake3D}
+            onDismiss={() => setBubbleVisible(false)}
+          />
+        )}
+      </View>
+    </ScreenShell>
   );
 }
 
 /* ---------------- 样式 ---------------- */
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000" },
+  /* header 右侧按钮（给 ScreenShell 的 rightSlot 用） */
+  headerIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(0,0,0,0.04)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  headerIconText: {
+    fontSize: 18,
+    color: "#111",
+  },
+
+  /* 中间内容区域（ScreenShell 已经给了背景和 padding） */
+  content: {
+    flex: 1,
+    backgroundColor: "#f5f5f5",
+  },
 
   itemWrapper: {
     width: screenW,
-    height: screenH,
+    flex: 1,
     justifyContent: "center",
     alignItems: "center",
   },
 
   image: {
     width: screenW,
-    height: screenH,
+    height: "100%",
   },
 
-  backBtn: {
-    position: "absolute",
-    top: 50,
-    left: 20,
-    zIndex: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: "rgba(0,0,0,0.55)",
+  /* 底部操作区内容（放在 ScreenShell.bottomSlot 里） */
+  bottomBarInner: {
+    flex: 1,
+    justifyContent: "center",
   },
-  backText: { color: "#fff", fontSize: 16 },
-
-  counterWrapper: {
-    position: "absolute",
-    top: 50,
-    right: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 16,
-    backgroundColor: "rgba(0,0,0,0.55)",
+  bottomShareBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 4,
   },
-  counterText: { color: "#fff", fontSize: 14 },
+  bottomShareText: {
+    fontSize: 12,
+    color: "#111",
+  },
+  bottomHint: {
+    fontSize: 11,
+    color: "rgba(0,0,0,0.5)",
+  },
 
   segOverlayImage: {
     position: "absolute",
     left: 0,
     top: 0,
-    width: screenW,
-    height: screenH,
+    right: 0,
+    bottom: 0,
   },
 
   pointDot: {
@@ -553,31 +586,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
-      // 边缘 glow（只在选中区域内，因为被 MaskedView 裁剪）
   segGlow: {
     position: "absolute",
     left: 0,
     right: 0,
     top: 0,
     bottom: 0,
-
     borderWidth: 1,
     borderColor: "rgba(0,224,255,0.95)",
-
     shadowColor: "#00E0FF",
     shadowOpacity: 0.9,
     shadowOffset: { width: 0, height: 0 },
-    // shadowRadius 由动画控制
     elevation: 6,
   },
 
-  // 斜向高光条（被 mask 裁剪，只在选区里看到）
   segShimmer: {
     position: "absolute",
-    top: -screenH,        // 做成足够高的条
+    top: -screenH,
     bottom: -screenH,
-    width: screenW * 0.4, // 窄一点好看
-
+    width: screenW * 0.4,
     backgroundColor: "rgba(255,255,255,0.15)",
   },
 
