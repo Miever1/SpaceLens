@@ -4,9 +4,10 @@ import type { MyAsset } from "@/hooks/usePhotoAssets";
 import * as Haptics from "expo-haptics";
 import { useRef, useState } from "react";
 import {
-    Alert,
-    Dimensions,
-    GestureResponderEvent,
+  Alert,
+  Dimensions,
+  GestureResponderEvent,
+  Image as RNImage,
 } from "react-native";
 
 const { width: screenW } = Dimensions.get("window");
@@ -41,19 +42,78 @@ export function usePhotoActions() {
 
   const [imgLayout, setImgLayout] = useState<ImgLayout | null>(null);
 
-  const mapTouch = (
-    e: GestureResponderEvent,
-    asset: MyAsset
-  ): { x: number; y: number } | null => {
-    if (!imgLayout) return null;
 
-    const { locationX, locationY } = e.nativeEvent;
 
-    return {
-      x: Math.round((locationX * asset.width) / imgLayout.width),
-      y: Math.round((locationY * asset.height) / imgLayout.height),
-    };
+const mapTouch = (
+  e: GestureResponderEvent,
+  asset: MyAsset
+): { x: number; y: number } | null => {
+  if (!imgLayout) return null;
+
+  const { locationX, locationY } = e.nativeEvent;
+
+  const boxW = imgLayout.width;
+  const boxH = imgLayout.height;
+
+  if (!boxW || !boxH) return null;
+
+  // 宽高比
+  const imgRatio = (asset.width || 1) / (asset.height || 1);
+  const boxRatio = boxW / boxH;
+
+  let drawW: number;
+  let drawH: number;
+  let offsetX: number;
+  let offsetY: number;
+
+  if (imgRatio > boxRatio) {
+    drawW = boxW;
+    drawH = boxW / imgRatio;
+    offsetX = 0;
+    offsetY = (boxH - drawH) / 2;
+  } else {
+    drawH = boxH;
+    drawW = boxH * imgRatio;
+    offsetY = 0;
+    offsetX = (boxW - drawW) / 2;
+  }
+
+  const xInImgBox = locationX - offsetX;
+  const yInImgBox = locationY - offsetY;
+
+  if (
+    xInImgBox < 0 ||
+    yInImgBox < 0 ||
+    xInImgBox > drawW ||
+    yInImgBox > drawH
+  ) {
+    console.log("[mapTouch] touch outside image box", {
+      locationX,
+      locationY,
+      offsetX,
+      offsetY,
+      drawW,
+      drawH,
+    });
+    return null;
+  }
+
+  const xNorm = xInImgBox / drawW; // 0~1
+  const yNorm = yInImgBox / drawH; // 0~1
+
+  const mapped = {
+    x: Number(xNorm.toFixed(4)),
+    y: Number(yNorm.toFixed(4)),
   };
+
+  console.log("[mapTouch] mapped (normalized)", {
+    box: { xInImgBox, yInImgBox },
+    result: mapped,
+    raw: { locationX, locationY },
+  });
+
+  return mapped;
+};
 
   const showBubble = (x: number, y: number) => {
     const w = 160;
@@ -106,10 +166,18 @@ export function usePhotoActions() {
 
       const fileName = `${id}.jpg`;
 
+      const iw = asset.width || 1;
+      const ih = asset.height || 1;
+      const backendPoints = newList.map((p) => ({
+        x: Math.round(p.x * iw),
+        y: Math.round(p.y * ih),
+        label: typeof p.label === "number" ? p.label : 1,
+      }));
+
       const { segUrl, maskUrl } = await sam3dSegment({
         uri: asset.uri,
         serverFilename: fileName,
-        points: newList,
+        points: backendPoints,
       });
 
       console.log("[usePhotoActions] seg result:", {
@@ -122,9 +190,15 @@ export function usePhotoActions() {
         throw new Error("segment response missing segUrl/maskUrl");
       }
 
-      // 如果只有 segUrl 也先用着（老后端兼容）
-      setSegPreviewUri(segUrl ?? null);
-      setSegMaskUri(maskUrl ?? segUrl ?? null);
+      const ts = Date.now();
+      const segUrlWithTs = segUrl ? `${segUrl}?t=${ts}` : null;
+      const maskUrlWithTs = maskUrl ? `${maskUrl}?t=${ts}` : null;
+
+      const urlsToPrefetch = [segUrlWithTs, maskUrlWithTs].filter(Boolean) as string[];
+      await Promise.all(urlsToPrefetch.map((u) => RNImage.prefetch(u)));
+
+      setSegPreviewUri(segUrlWithTs ?? null);
+      setSegMaskUri(maskUrlWithTs ?? segUrlWithTs ?? null);
       setSegAssetId(id);
 
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -141,7 +215,6 @@ export function usePhotoActions() {
     const last = lastPointRef.current;
     if (!last || last.assetId !== asset.id) return;
 
-    // 允许 segMaskUri 或 segPreviewUri 任意一个存在就生成 3D
     if (!segMaskUri && !segPreviewUri) return;
     if (generatingId) return;
 
@@ -150,11 +223,9 @@ export function usePhotoActions() {
       setPreviewLoading(true);
       setBubbleVisible(false);
 
-      const glbUrl = await sam3dGenerate3D({
+      const { glbUrl } = await sam3dGenerate3D({
         uri: asset.uri,
         serverFilename: `${asset.id}.jpg`,
-        x: last.x,
-        y: last.y,
       });
 
       setPreviewGlbUrl(glbUrl);
@@ -190,3 +261,5 @@ export function usePhotoActions() {
     setBubbleVisible,
   };
 }
+
+export default usePhotoActions;

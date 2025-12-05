@@ -8,10 +8,12 @@ export default function MiniModelViewer({
   glb,
   backgroundColor,
   full,
+  size,
 }: {
   glb?: string;
   backgroundColor?: string;
   full?: boolean;
+  size?: number;
 }) {
   const webviewRef = useRef<WebView | null>(null);
   const lastInjectRef = useRef<number>(0);
@@ -176,7 +178,7 @@ export default function MiniModelViewer({
   }, []);
 
   return (
-    <View style={full ? styles.fullContainer : styles.container}>
+    <View style={[full ? styles.fullContainer : styles.container, { width: size, height: size }]}>
       <WebView
         ref={webviewRef}
         source={{ html }}
@@ -186,6 +188,9 @@ export default function MiniModelViewer({
         pointerEvents="none"
         scrollEnabled={false}
         androidLayerType="software"
+        {...(Platform.OS === "android"
+          ? { androidLayerType: "hardware" as const }
+          : {})}
       />
     </View>
   );

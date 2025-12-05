@@ -1,6 +1,6 @@
 // app/(tabs)/index.tsx
 import React, { useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 
 import FlyToGridOverlay from "../../components/animation/FlyToGridOverlay";
 import PhotoDetail from "../../components/gallery/PhotoDetail";
@@ -27,6 +27,7 @@ type GeneratingStatusMap = Record<
 >;
 
 export default function AlbumTab() {
+  const isAndroid = Platform.OS === "android";
   const { assets, loading, loadMore, addPhoto } = usePhotoAssets();
 
   /** S3 里的 3D 模型列表 */
@@ -204,6 +205,10 @@ export default function AlbumTab() {
             setActive3DModel(null);
           }}
           onOpenAR={() => {
+            if (isAndroid) {
+              alert("AR is not supported on Android yet.");
+              return;
+            }
             setShow3D(false);
             setShowAR(true);
           }}

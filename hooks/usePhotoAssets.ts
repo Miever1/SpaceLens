@@ -2,13 +2,14 @@
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
 import { useCallback, useEffect, useState } from "react";
+import { Platform } from "react-native";
 
 export type MyAsset = {
   id: string;
   uri: string;
-  width: number;   // ✅ 新增
-  height: number;  // ✅ 新增
-  usdz?: string; // ✅ 可选的 usdz 字段
+  width: number;
+  height: number;
+  usdz?: string;
 };
 
 export default function usePhotoAssets(limit: number = 20) {
@@ -17,24 +18,42 @@ export default function usePhotoAssets(limit: number = 20) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
 
-  /** 把 MediaLibrary 的 asset 转成我们自己的 MyAsset */
-  const mapAssets = useCallback(async (items: MediaLibrary.Asset[]) => {
-    return Promise.all(
-      items.map(async (a) => {
-        const info = await MediaLibrary.getAssetInfoAsync(a);
-        const uri = info.localUri ?? a.uri;
+  const normalizeAsset = useCallback(
+    async (a: MediaLibrary.Asset): Promise<MyAsset> => {
+      let uri = a.uri;
 
-        return {
-          id: a.id,
-          uri,
-          width: info.width ?? a.width ?? 0,
-          height: info.height ?? a.height ?? 0,
-        };
-      })
-    );
-  }, []);
+      if (Platform.OS === "ios" && uri.startsWith("ph://")) {
+        try {
+          const info = await MediaLibrary.getAssetInfoAsync(a);
+          if (info.localUri) {
+            uri = info.localUri;
+          }
+        } catch (e) {
+          console.warn("[usePhotoAssets] getAssetInfoAsync error:", e);
+        }
+      }
 
-  /** 初次加载 / 刷新 */
+      return {
+        id: a.id,
+        uri,
+        width: a.width ?? 0,
+        height: a.height ?? 0,
+      };
+    },
+    []
+  );
+
+  const mapAssets = useCallback(
+    async (items: MediaLibrary.Asset[]) => {
+      const mapped = await Promise.all(items.map(normalizeAsset));
+      if (mapped[0]) {
+        console.log("[usePhotoAssets] first mapped uri =", mapped[0].uri);
+      }
+      return mapped;
+    },
+    [normalizeAsset]
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -52,7 +71,6 @@ export default function usePhotoAssets(limit: number = 20) {
       });
 
       const mapped = await mapAssets(res.assets);
-
       setAssets(mapped);
       setCursor(res.endCursor ?? null);
       setHasMore(res.hasNextPage);
@@ -61,7 +79,6 @@ export default function usePhotoAssets(limit: number = 20) {
     }
   }, [limit, mapAssets]);
 
-  /** 加载更多 */
   const loadMore = useCallback(async () => {
     if (!hasMore || loading || !cursor) return;
 
@@ -75,7 +92,6 @@ export default function usePhotoAssets(limit: number = 20) {
       });
 
       const mapped = await mapAssets(res.assets);
-
       setAssets((prev) => [...prev, ...mapped]);
       setCursor(res.endCursor ?? null);
       setHasMore(res.hasNextPage);
@@ -84,7 +100,6 @@ export default function usePhotoAssets(limit: number = 20) {
     }
   }, [cursor, hasMore, loading, limit, mapAssets]);
 
-  /** 添加照片 */
   const addPhoto = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return;
@@ -98,21 +113,33 @@ export default function usePhotoAssets(limit: number = 20) {
 
     const picked = result.assets[0];
 
-    const newAsset = await MediaLibrary.createAssetAsync(picked.uri);
-    const info = await MediaLibrary.getAssetInfoAsync(newAsset);
+    let uri = picked.uri;
 
-    const item: MyAsset = {
-      id: newAsset.id,
-      uri: info.localUri ?? newAsset.uri,
-      width: info.width ?? newAsset.width ?? 0,
-      height: info.height ?? newAsset.height ?? 0,
+    if (Platform.OS === "ios") {
+      try {
+        if (picked.assetId) {
+          const info = await MediaLibrary.getAssetInfoAsync(picked.assetId);
+          if (info.localUri) {
+            uri = info.localUri;
+          }
+        }
+      } catch (e) {
+        console.warn("[usePhotoAssets] addPhoto getAssetInfoAsync error:", e);
+      }
+    }
+
+    const newAsset: MyAsset = {
+      id: picked.assetId ?? uri,
+      uri,
+      width: picked.width ?? 0,
+      height: picked.height ?? 0,
     };
 
-    // 直接加到顶部
-    setAssets((prev) => [item, ...prev]);
+    console.log("[usePhotoAssets] addPhoto uri =", newAsset.uri);
+
+    setAssets((prev) => [newAsset, ...prev]);
   }, []);
 
-  /** 删除照片 */
   const deleteAsset = useCallback(async (id: string) => {
     try {
       await MediaLibrary.deleteAssetsAsync([id]);

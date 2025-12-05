@@ -2,34 +2,32 @@ import type { Sam3DItem } from "@/api/sam3d";
 import type { MyAsset } from "@/hooks/usePhotoAssets";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
   Dimensions,
-  findNodeHandle,
   FlatList,
   Image,
+  LayoutChangeEvent,
   StyleSheet,
   Text,
   TouchableOpacity,
   UIManager,
   View,
+  findNodeHandle,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import MiniModelViewer from "../three/MiniModelViewer";
 
-// 用 window 宽度做一个初始值，真正的宽度用 onLayout 再更新
 const INITIAL_WIDTH = Dimensions.get("window").width;
 
-// 不同宽度下自动调列数
 const getNumColumns = (width: number) => {
-  if (width >= 1024) return 5; // iPad 横屏
-  if (width >= 768) return 3;  // iPad 竖屏
-  return 3;                    // iPhone
+  if (width >= 1024) return 5;
+  if (width >= 768) return 3;
+  return 3;
 };
 
-// ⭐ 顶部标题区域高度（FlatList 用它来 paddingTop）
 const HEADER_HEIGHT = 80;
 
 /* -------------------------------------------------------------------------- */
@@ -67,52 +65,91 @@ type Props = {
 };
 
 /* -------------------------------------------------------------------------- */
-/* 占位格子：原图背景 + 发光呼吸边框                                         */
+/* 🔥 1. 占位格子组件 + React.memo                                           */
 /* -------------------------------------------------------------------------- */
-const PlaceholderCell = ({
-  status,
-  thumbUri,
-  onLayout,
-  size,
-}: {
-  status: "pending" | "error";
-  thumbUri?: string;
-  onLayout?: (ev: any) => void;
-  size: number;
-}) => {
-  const progress = useRef(new Animated.Value(0)).current;
+const PlaceholderCell = React.memo(
+  ({
+    status,
+    thumbUri,
+    onLayout,
+    size,
+  }: {
+    status: "pending" | "error";
+    thumbUri?: string;
+    onLayout?: (ev: LayoutChangeEvent) => void;
+    size: number;
+  }) => {
+    const progress = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    if (status !== "pending") return;
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(progress, {
-          toValue: 1,
-          duration: 900,
-          useNativeDriver: false,
-        }),
-        Animated.timing(progress, {
-          toValue: 0,
-          duration: 900,
-          useNativeDriver: false,
-        }),
-      ])
-    ).start();
-  }, [status]);
+    useEffect(() => {
+      if (status !== "pending") return;
+      const anim = Animated.loop(
+        Animated.sequence([
+          Animated.timing(progress, {
+            toValue: 1,
+            duration: 900,
+            useNativeDriver: false,
+          }),
+          Animated.timing(progress, {
+            toValue: 0,
+            duration: 900,
+            useNativeDriver: false,
+          }),
+        ])
+      );
+      anim.start();
+      return () => {
+        anim.stop();
+      };
+    }, [status, progress]);
 
-  const borderColor = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["rgba(0,224,255,0.25)", "rgba(0,224,255,1)"],
-  });
+    const borderColor = progress.interpolate({
+      inputRange: [0, 1],
+      outputRange: ["rgba(0,224,255,0.25)", "rgba(0,224,255,1)"],
+    });
 
-  if (status === "error") {
+    if (status === "error") {
+      return (
+        <View
+          style={[
+            styles.item,
+            { width: size, height: size },
+            styles.placeholderBox,
+            styles.placeholderError,
+          ]}
+          onLayout={onLayout}
+        >
+          {thumbUri && (
+            <>
+              <Image
+                source={{ uri: thumbUri }}
+                style={styles.placeholderBgImage}
+                blurRadius={4}
+              />
+              <View style={styles.placeholderBgDim} />
+            </>
+          )}
+          <Text style={[styles.placeholderText, { color: "#ff6666" }]}>
+            Failed
+          </Text>
+        </View>
+      );
+    }
+
     return (
-      <View
+      <Animated.View
         style={[
           styles.item,
           { width: size, height: size },
           styles.placeholderBox,
-          styles.placeholderError,
+          {
+            borderWidth: 3.5,
+            borderColor,
+            shadowColor: "#00E0FF",
+            shadowRadius: 18,
+            shadowOpacity: 0.7,
+            shadowOffset: { width: 0, height: 0 },
+          },
         ]}
         onLayout={onLayout}
       >
@@ -121,51 +158,96 @@ const PlaceholderCell = ({
             <Image
               source={{ uri: thumbUri }}
               style={styles.placeholderBgImage}
-              blurRadius={4}
+              blurRadius={6}
             />
             <View style={styles.placeholderBgDim} />
           </>
         )}
-        <Text style={[styles.placeholderText, { color: "#ff6666" }]}>
-          Failed
-        </Text>
-      </View>
+
+        <ActivityIndicator color="#00E0FF" />
+        <Text style={styles.placeholderText}>Generating 3D…</Text>
+      </Animated.View>
     );
-  }
+  },
+  (prev, next) =>
+    prev.status === next.status &&
+    prev.thumbUri === next.thumbUri &&
+    prev.size === next.size &&
+    prev.onLayout === next.onLayout
+);
 
-  return (
-    <Animated.View
-      style={[
-        styles.item,
-        { width: size, height: size },
-        styles.placeholderBox,
-        {
-          borderWidth: 3.5,
-          borderColor,
-          shadowColor: "#00E0FF",
-          shadowRadius: 18,
-          shadowOpacity: 0.7,
-          shadowOffset: { width: 0, height: 0 },
-        },
-      ]}
-      onLayout={onLayout}
-    >
-      {thumbUri && (
-        <>
-          <Image
-            source={{ uri: thumbUri }}
-            style={styles.placeholderBgImage}
-            blurRadius={6}
-          />
-          <View style={styles.placeholderBgDim} />
-        </>
-      )}
-
-      <ActivityIndicator color="#00E0FF" />
-      <Text style={styles.placeholderText}>Generating 3D…</Text>
-    </Animated.View>
-  );
+/* -------------------------------------------------------------------------- */
+/* 🔥 2. PhotoCell + React.memo                                              */
+/* -------------------------------------------------------------------------- */
+type PhotoCellProps = {
+  id: string;
+  uri: string;
+  assetIndex: number;
+  size: number;
+  onPress: (index: number) => void;
+  onLayout?: (ev: LayoutChangeEvent) => void;
 };
+
+const PhotoCell = React.memo(
+  ({ id, uri, assetIndex, size, onPress, onLayout }: PhotoCellProps) => {
+    return (
+      <TouchableOpacity
+        style={[styles.item, { width: size, height: size }]}
+        onPress={() => onPress(assetIndex)}
+        onLayout={onLayout}
+        activeOpacity={0.9}
+      >
+        <Image source={{ uri }} style={styles.image} />
+      </TouchableOpacity>
+    );
+  },
+  (prev, next) =>
+    prev.id === next.id &&
+    prev.uri === next.uri &&
+    prev.size === next.size &&
+    prev.assetIndex === next.assetIndex &&
+    prev.onPress === next.onPress &&
+    prev.onLayout === next.onLayout
+);
+
+/* -------------------------------------------------------------------------- */
+/* 🔥 3. ModelCell + React.memo                                              */
+/* -------------------------------------------------------------------------- */
+type ModelCellProps = {
+  id: string;
+  glbUrl: string;
+  size: number;
+  model?: Sam3DItem;
+  index: number;
+  onPress3D?: (item: Sam3DItem, index: number) => void;
+  onLayout?: (ev: LayoutChangeEvent) => void;
+};
+
+const ModelCell = React.memo(
+  ({ id, glbUrl, size, model, index, onPress3D, onLayout }: ModelCellProps) => {
+    return (
+      <TouchableOpacity
+        style={[styles.item, { width: size, height: size }]}
+        onPress={() => model && onPress3D?.(model, index)}
+        onLayout={onLayout}
+        activeOpacity={0.9}
+      >
+        <MiniModelViewer glb={glbUrl} size={size} />
+        <View style={styles.model3dBadge}>
+          <Ionicons name="cube-outline" size={14} color="#4D4D4D" />
+        </View>
+      </TouchableOpacity>
+    );
+  },
+  (prev, next) =>
+    prev.id === next.id &&
+    prev.glbUrl === next.glbUrl &&
+    prev.size === next.size &&
+    prev.model?.key === next.model?.key &&
+    prev.index === next.index &&
+    prev.onPress3D === next.onPress3D &&
+    prev.onLayout === next.onLayout
+);
 
 /* -------------------------------------------------------------------------- */
 /* 主组件                                                                      */
@@ -180,17 +262,14 @@ export default function PhotoGrid(props: Props) {
     onPress3D,
     onLoadMore,
     onItemLayout,
+    onAddPhoto,
   } = props;
 
-  const insets = useSafeAreaInsets(); // 暂时没用，但保留不动
+  const insets = useSafeAreaInsets();
 
-  // 👉 实际可用宽度，来自容器 onLayout
   const [listWidth, setListWidth] = useState(INITIAL_WIDTH);
 
-  const numColumns = useMemo(
-    () => getNumColumns(listWidth),
-    [listWidth]
-  );
+  const numColumns = useMemo(() => getNumColumns(listWidth), [listWidth]);
 
   const itemSize = useMemo(
     () => listWidth / numColumns - 5,
@@ -230,7 +309,6 @@ export default function PhotoGrid(props: Props) {
         .map((v) => (v.model as Sam3DItem).key)
     );
 
-    // 老 3D（过滤 usdz）
     threeModels.forEach((m) => {
       if (m.url.endsWith(".usdz")) return;
       if (!replacedKeys.has(m.key)) {
@@ -243,7 +321,6 @@ export default function PhotoGrid(props: Props) {
       }
     });
 
-    // 照片
     assets.forEach((a, idx) => {
       items.push({ kind: "photo", id: a.id, uri: a.uri, assetIndex: idx });
     });
@@ -252,30 +329,44 @@ export default function PhotoGrid(props: Props) {
   }, [assets, threeModels, generatingStatus]);
 
   /* ---------------------------------------------------------------------- */
-  /* Layout measurement for animation                                        */
+  /* 🔥 Layout measurement 用 useCallback 保持引用稳定                        */
   /* ---------------------------------------------------------------------- */
-  const measureLayout = (item: GridItem, target: any) => {
-    const node = findNodeHandle(target);
-    if (!node) return;
+  const measureLayout = useCallback(
+    (item: GridItem, target: number | null | undefined) => {
+      if (!target) return;
+      UIManager.measure(
+        target,
+        (x, y, w, h, pageX, pageY) => {
+          onItemLayout?.(item, { x: pageX, y: pageY, width: w, height: h });
+        }
+      );
+    },
+    [onItemLayout]
+  );
 
-    UIManager.measure(node, (x, y, w, h, pageX, pageY) => {
-      onItemLayout?.(item, { x: pageX, y: pageY, width: w, height: h });
-    });
-  };
+  const handleItemLayout = useCallback(
+    (item: GridItem) => (e: LayoutChangeEvent) => {
+      // RN 里 target 是在 nativeEvent 里
+      const target = (e.nativeEvent as any).target ?? findNodeHandle(e.target as any);
+      measureLayout(item, target);
+    },
+    [measureLayout]
+  );
 
   /* ---------------------------------------------------------------------- */
-  /* renderItem                                                              */
+  /* 🔥 renderItem 里只负责拆 props，渲染交给 memo 子组件                     */
   /* ---------------------------------------------------------------------- */
   const renderItem = ({ item }: { item: GridItem }) => {
     if (item.kind === "photo") {
       return (
-        <TouchableOpacity
-          style={[styles.item, { width: itemSize, height: itemSize }]}
-          onPress={() => props.onPress(item.assetIndex)}
-          onLayout={(e) => measureLayout(item, e.target)}
-        >
-          <Image source={{ uri: item.uri }} style={styles.image} />
-        </TouchableOpacity>
+        <PhotoCell
+          id={item.id}
+          uri={item.uri}
+          assetIndex={item.assetIndex}
+          size={itemSize}
+          onPress={onPress}
+          onLayout={handleItemLayout(item)}
+        />
       );
     }
 
@@ -284,16 +375,15 @@ export default function PhotoGrid(props: Props) {
       const model = idx >= 0 ? threeModels[idx] : undefined;
 
       return (
-        <TouchableOpacity
-          style={[styles.item, { width: itemSize, height: itemSize }]}
-          onPress={() => model && props.onPress3D?.(model, idx)}
-          onLayout={(e) => measureLayout(item, e.target)}
-        >
-          <MiniModelViewer glb={item.glbUrl} />
-          <View style={styles.model3dBadge}>
-            <Ionicons name="cube-outline" size={14} color="#4D4D4D" />
-          </View>
-        </TouchableOpacity>
+        <ModelCell
+          id={item.id}
+          glbUrl={item.glbUrl}
+          size={itemSize}
+          model={model}
+          index={idx}
+          onPress3D={onPress3D}
+          onLayout={handleItemLayout(item)}
+        />
       );
     }
 
@@ -302,7 +392,7 @@ export default function PhotoGrid(props: Props) {
         status={item.status}
         thumbUri={item.thumbUri}
         size={itemSize}
-        onLayout={(e: any) => measureLayout(item, e.target)}
+        onLayout={handleItemLayout(item)}
       />
     );
   };
@@ -321,11 +411,10 @@ export default function PhotoGrid(props: Props) {
           }
         }}
       >
-        {/* ⭐ 固定在顶部的标题 + 渐变背景（覆盖在网格上） */}
         <View style={styles.headerWrapper}>
           <LinearGradient
             colors={[
-              "rgba(0,0,0,0.40)", // 顶部：淡淡灰黑
+              "rgba(0,0,0,0.40)",
               "rgba(0,0,0,0.32)",
               "rgba(0,0,0,0.24)",
               "rgba(0,0,0,0.16)",
@@ -337,29 +426,17 @@ export default function PhotoGrid(props: Props) {
             style={styles.headerGradient}
           />
 
-          {/* 标题 + 统计 + 右侧「+」按钮 */}
           <View style={styles.headerRow}>
             <View>
               <Text style={styles.headerTitle}>Library</Text>
-              <Text style={styles.headerCount}>
-                {gridItems.length} items
-              </Text>
+              <Text style={styles.headerCount}>{gridItems.length} items</Text>
             </View>
-
-            {/* <TouchableOpacity
-              style={styles.addBtn}
-              onPress={props.onAddPhoto}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="add" size={20} color="#111" />
-            </TouchableOpacity> */}
           </View>
         </View>
 
-        {/* 下方网格滚动，内容在 header 背后经过 */}
         <FlatList
           data={gridItems}
-          key={numColumns}              // ⭐ 列数变动时强制重建列表
+          key={numColumns}
           numColumns={numColumns}
           keyExtractor={(item) =>
             item.kind === "photo"
@@ -369,7 +446,7 @@ export default function PhotoGrid(props: Props) {
               : `placeholder-${item.assetId}`
           }
           renderItem={renderItem}
-          onEndReached={props.onLoadMore}
+          onEndReached={onLoadMore}
           onEndReachedThreshold={0.4}
           contentContainerStyle={{
             paddingTop: HEADER_HEIGHT + 8,
@@ -377,6 +454,14 @@ export default function PhotoGrid(props: Props) {
           }}
         />
       </View>
+
+      <TouchableOpacity
+        style={styles.addBtn}
+        onPress={onAddPhoto}
+        activeOpacity={0.85}
+      >
+        <Ionicons name="add" size={20} color="#111" />
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -385,7 +470,6 @@ export default function PhotoGrid(props: Props) {
 /* Styles                                                                     */
 /* -------------------------------------------------------------------------- */
 const styles = StyleSheet.create({
-  /* Header：绝对定位，盖在最上层，背景透明 */
   headerWrapper: {
     position: "absolute",
     top: 0,
@@ -398,21 +482,17 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
     overflow: "hidden",
     zIndex: 10,
-    pointerEvents: "none", // ⭐ 不挡下面网格的点击
+    pointerEvents: "none",
   },
-
   headerGradient: {
     ...StyleSheet.absoluteFillObject,
   },
-
-  // 标题 + 按钮排一行
   headerRow: {
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",
-    pointerEvents: "auto", // ❗ 允许点击「+」按钮
+    pointerEvents: "auto",
   },
-
   headerTitle: {
     fontSize: 32,
     fontWeight: "900",
@@ -424,25 +504,30 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "#fff",
   },
-
   addBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.92)",
+    position: "absolute",
+    bottom: 64,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#ffffff",
     justifyContent: "center",
     alignItems: "center",
-  },
 
-  /* Grid item：不再在这里写死 width / height，用 size 动态传 */
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+
+    elevation: 6,
+  },
   item: {
     margin: 2,
     borderRadius: 10,
-    overflow: "hidden",
   },
   image: { width: "100%", height: "100%" },
 
-  /* Placeholder */
   placeholderBox: {
     justifyContent: "center",
     alignItems: "center",
@@ -462,8 +547,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 6,
   },
-
-  /* 3D badge */
   model3dBadge: {
     position: "absolute",
     top: 4,
@@ -475,8 +558,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderRadius: 50,
   },
-
-  /* Center loading */
   center: {
     flex: 1,
     justifyContent: "center",

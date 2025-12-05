@@ -8,9 +8,8 @@
 //     : "http://10.0.2.2:9000";  // Android 模拟器
 
 // 真机 / 评审环境：走 ngrok 公网地址
-export const BASE_URL = "https://overidly-anthropogenic-margot.ngrok-free.dev";
-
-const SAM3D_TOKEN = "my_secure_token_123";
+const SAM3D_TOKEN = process.env.EXPO_PUBLIC_SAM3D_TOKEN!;
+const BASE_URL = process.env.EXPO_PUBLIC_SAM3D_BASE_URL!;
 
 export type SamPoint = {
   x: number;
@@ -97,7 +96,7 @@ export async function sam3dSegment(params: {
 /* -------------------------------------------------------------------------- */
 export async function sam3dGenerate3D(params: {
   uri: string;
-  serverFilename: string;  // ⚠️ 必须和 sam3dSegment 里的一致
+  serverFilename: string;
 }): Promise<{ glbUrl: string; usdzUrl?: string | null }> {
   const { uri, serverFilename } = params;
 

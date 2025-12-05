@@ -2,16 +2,16 @@ import { BlurView } from "expo-blur";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-    Animated,
-    FlatList,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Animated,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -42,10 +42,13 @@ const PARTICIPANTS: Record<
   },
 };
 
-export default function ChatScreen() {
+export default function ChatScreen({
+  initialGlb,
+}: {
+  initialGlb?: string;  
+}) {
   const router = useRouter();
   const params = useLocalSearchParams<{ glb?: string }>();
-  const initialGlb = params.glb;
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {

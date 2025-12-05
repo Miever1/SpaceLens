@@ -10,8 +10,7 @@ import {
   Animated,
   Dimensions,
   FlatList,
-  Image,
-  Pressable,
+  Image, Platform, Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -178,15 +177,40 @@ const PointsOverlay = ({
 }) => {
   if (!points.length) return null;
 
-  const iw = (asset as any).width ?? 0;
-  const ih = (asset as any).height ?? 0;
+  const iw = asset.width || 0;
+  const ih = asset.height || 0;
   if (!iw || !ih) return null;
+
+  const cw = imgLayout.width;
+  const ch = imgLayout.height;
+
+  const imgRatio = iw / ih;
+  const boxRatio = cw / ch;
+
+  let drawW: number;
+  let drawH: number;
+  let offsetX: number;
+  let offsetY: number;
+
+  if (imgRatio > boxRatio) {
+    drawW = cw;
+    drawH = cw / imgRatio;
+    offsetX = 0;
+    offsetY = (ch - drawH) / 2;
+  } else {
+    drawH = ch;
+    drawW = ch * imgRatio;
+    offsetY = 0;
+    offsetX = (cw - drawW) / 2;
+  }
 
   return (
     <>
       {points.map((p, idx) => {
-        const left = (p.x / iw) * imgLayout.width;
-        const top = (p.y / ih) * imgLayout.height;
+        // ⭐ 这里把 x,y 当 0~1 用
+        const left = offsetX + p.x * drawW;
+        const top = offsetY + p.y * drawH;
+
         return (
           <View
             key={`${asset.id}-${idx}`}
@@ -300,10 +324,10 @@ export default function PhotoDetail({
     onStartGenerate3D?.(currentAsset.id, fromRect);
 
     generate3D(currentAsset)
-      .then((model) => {
+      .then((model: any) => {
         onFinishGenerate3D?.(currentAsset.id, true, model);
       })
-      .catch((err) => {
+      .catch((err: any) => {
         console.warn("generate3D error:", err);
         onFinishGenerate3D?.(currentAsset.id, false);
       });
@@ -374,41 +398,45 @@ export default function PhotoDetail({
             const pts = points[item.id] ?? [];
             const isSeg = segAssetId === item.id;
 
-            return (
-              <Pressable
-                style={styles.itemWrapper}
-                onLongPress={(e) => onLongPress(e, item)}
-                onPress={() => setBubbleVisible(false)}
-              >
-                <Image
-                  source={{ uri: item.uri }}
-                  style={styles.image}
-                  resizeMode="contain"
-                  onLayout={(ev) =>
-                    setImgLayout({
-                      x: ev.nativeEvent.layout.x,
-                      y: ev.nativeEvent.layout.y,
-                      width: ev.nativeEvent.layout.width,
-                      height: ev.nativeEvent.layout.height,
-                    })
-                  }
+          return (
+            <Pressable
+              style={styles.itemWrapper}
+              onLayout={(ev) => {
+                const { x, y, width, height } = ev.nativeEvent.layout;
+                setImgLayout({ x, y, width, height });
+              }}
+              onLongPress={(e) => onLongPress(e, item)}
+              onPress={() => setBubbleVisible(false)}
+            >
+              <Image
+                source={{ uri: item.uri }}
+                style={styles.image}
+                resizeMode="contain"
+              />
+
+              {/* 整张图变暗的遮罩，只在有分割预览时显示 */}
+              {isSeg && (
+                <View
+                  pointerEvents="none"
+                  style={styles.segDimBackground}
                 />
+              )}
 
-                {/* 整张图变暗的遮罩，只在有分割预览时显示 */}
-                {isSeg && (
-                  <View
-                    pointerEvents="none"
-                    style={styles.segDimBackground}
+              {isSeg && segMaskUri && (
+                Platform.OS === "android" ? (
+                  <Image
+                    source={{ uri: segPreviewUri ?? segMaskUri }}
+                    style={StyleSheet.absoluteFill}
+                    resizeMode="contain"
                   />
-                )}
-
-                {/* 用 mask 把选中区域重新“提亮”成原图 */}
-                {isSeg && segMaskUri && (
+                ) : (
                   <MaskedView
+                    key={segMaskUri}
                     style={StyleSheet.absoluteFill}
                     pointerEvents="none"
                     maskElement={
                       <Image
+                        key={segMaskUri}
                         source={{ uri: segMaskUri }}
                         style={styles.segOverlayImage}
                         resizeMode="contain"
@@ -421,22 +449,23 @@ export default function PhotoDetail({
                       resizeMode="contain"
                     />
                   </MaskedView>
-                )}
+                )
+              )}
 
-                {/* 选中区域的边框 + 扫光特效 */}
-                {isSeg && segMaskUri && (
-                  <SegPreviewOverlay maskUri={segMaskUri} />
-                )}
+              {/* 选中区域的边框 + 扫光特效 */}
+              {isSeg && segMaskUri && (
+                <SegPreviewOverlay maskUri={segMaskUri} />
+              )}
 
-                {imgLayout && pts.length > 0 && (
-                  <PointsOverlay
-                    points={pts}
-                    asset={item}
-                    imgLayout={imgLayout}
-                  />
-                )}
-              </Pressable>
-            );
+              {imgLayout && pts.length > 0 && (
+                <PointsOverlay
+                  points={pts}
+                  asset={item}
+                  imgLayout={imgLayout}
+                />
+              )}
+            </Pressable>
+          );
           }}
         />
 
