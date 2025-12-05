@@ -12,6 +12,15 @@ import ShareButton from "../common/ShareButton";
 import use3DModelControls from "../../hooks/use3DModelControls";
 import ScreenShell from "../layout/ScreenShell";
 
+type ThreeConfig = {
+  glb: string;
+  usdz: string;
+  color: string;
+  texture: string;
+  light: string;
+  mockSize: { length: number; width: number; height: number };
+};
+
 type Props = {
   glb: string;
   usdz?: string;

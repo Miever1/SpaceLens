@@ -207,7 +207,6 @@ const PointsOverlay = ({
   return (
     <>
       {points.map((p, idx) => {
-        // ⭐ 这里把 x,y 当 0~1 用
         const left = offsetX + p.x * drawW;
         const top = offsetY + p.y * drawH;
 
