@@ -4,14 +4,15 @@ import type { MyAsset } from "@/hooks/usePhotoAssets";
 import * as Haptics from "expo-haptics";
 import { useRef, useState } from "react";
 import {
-    Alert,
-    Dimensions,
-    GestureResponderEvent,
+  Alert,
+  Dimensions,
+  GestureResponderEvent,
+  Image as RNImage,
 } from "react-native";
 
-const { width: screenW, height: screenH } = Dimensions.get("window");
+const { width: screenW } = Dimensions.get("window");
 
-type ImgLayout = { width: number; height: number };
+type ImgLayout = { width: number; height: number; x: number; y: number } | null;
 
 type LastPointRef = {
   assetId: string;
@@ -20,47 +21,100 @@ type LastPointRef = {
 } | null;
 
 export function usePhotoActions() {
-  /** 每张图的点击点 */
   const [points, setPoints] = useState<Record<string, SamPoint[]>>({});
 
-  /** 全局 loading 状态 */
   const [segmentingId, setSegmentingId] = useState<string | null>(null);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
 
-  /** 分割预览 */
+  /** 分割预览（带绿边） */
   const [segPreviewUri, setSegPreviewUri] = useState<string | null>(null);
+  /** 纯 mask，用来做 MaskedView */
+  const [segMaskUri, setSegMaskUri] = useState<string | null>(null);
   const [segAssetId, setSegAssetId] = useState<string | null>(null);
 
-  /** 3D 预览 */
   const [previewGlbUrl, setPreviewGlbUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  /** 最近一次点的位置（生成 3D 用） */
   const lastPointRef = useRef<LastPointRef>(null);
 
-  /** 气泡菜单 */
   const [bubbleVisible, setBubbleVisible] = useState(false);
   const [bubblePos, setBubblePos] = useState({ x: 0, y: 0 });
 
-  /** Image layout，用来把 RN 坐标映射回原图像素 */
   const [imgLayout, setImgLayout] = useState<ImgLayout | null>(null);
 
-  /** 把手指坐标映射到原图坐标 */
-  const mapTouch = (
-    e: GestureResponderEvent,
-    asset: MyAsset
-  ): { x: number; y: number } | null => {
-    if (!imgLayout) return null;
 
-    const { locationX, locationY } = e.nativeEvent;
 
-    return {
-      x: Math.round((locationX * asset.width) / imgLayout.width),
-      y: Math.round((locationY * asset.height) / imgLayout.height),
-    };
+const mapTouch = (
+  e: GestureResponderEvent,
+  asset: MyAsset
+): { x: number; y: number } | null => {
+  if (!imgLayout) return null;
+
+  const { locationX, locationY } = e.nativeEvent;
+
+  const boxW = imgLayout.width;
+  const boxH = imgLayout.height;
+
+  if (!boxW || !boxH) return null;
+
+  // 宽高比
+  const imgRatio = (asset.width || 1) / (asset.height || 1);
+  const boxRatio = boxW / boxH;
+
+  let drawW: number;
+  let drawH: number;
+  let offsetX: number;
+  let offsetY: number;
+
+  if (imgRatio > boxRatio) {
+    drawW = boxW;
+    drawH = boxW / imgRatio;
+    offsetX = 0;
+    offsetY = (boxH - drawH) / 2;
+  } else {
+    drawH = boxH;
+    drawW = boxH * imgRatio;
+    offsetY = 0;
+    offsetX = (boxW - drawW) / 2;
+  }
+
+  const xInImgBox = locationX - offsetX;
+  const yInImgBox = locationY - offsetY;
+
+  if (
+    xInImgBox < 0 ||
+    yInImgBox < 0 ||
+    xInImgBox > drawW ||
+    yInImgBox > drawH
+  ) {
+    console.log("[mapTouch] touch outside image box", {
+      locationX,
+      locationY,
+      offsetX,
+      offsetY,
+      drawW,
+      drawH,
+    });
+    return null;
+  }
+
+  const xNorm = xInImgBox / drawW; // 0~1
+  const yNorm = yInImgBox / drawH; // 0~1
+
+  const mapped = {
+    x: Number(xNorm.toFixed(4)),
+    y: Number(yNorm.toFixed(4)),
   };
 
-  /** 计算气泡菜单位置 */
+  console.log("[mapTouch] mapped (normalized)", {
+    box: { xInImgBox, yInImgBox },
+    result: mapped,
+    raw: { locationX, locationY },
+  });
+
+  return mapped;
+};
+
   const showBubble = (x: number, y: number) => {
     const w = 160;
     const h = 40;
@@ -75,7 +129,6 @@ export function usePhotoActions() {
     setBubbleVisible(true);
   };
 
-  /** 清空某张图片的点 & mask */
   const resetPoints = (assetId: string) => {
     setPoints((p) => {
       const cp = { ...p };
@@ -85,6 +138,7 @@ export function usePhotoActions() {
 
     if (segAssetId === assetId) {
       setSegPreviewUri(null);
+      setSegMaskUri(null);
       setSegAssetId(null);
     }
 
@@ -92,12 +146,14 @@ export function usePhotoActions() {
     setBubbleVisible(false);
   };
 
-  /** 分割：加点 + 调后端 + 更新预览 */
-  const addPointAndSegment = async (asset: MyAsset, point: { x: number; y: number }) => {
+  /** 加点 + 分割 */
+  const addPointAndSegment = async (
+    asset: MyAsset,
+    point: { x: number; y: number }
+  ) => {
     const id = asset.id;
     const prev = points[id] ?? [];
 
-    // 最多保留最近 5 个点
     const newList: SamPoint[] = [...prev, { ...point, label: 1 }].slice(-5);
     setPoints((p) => ({ ...p, [id]: newList }));
     lastPointRef.current = { assetId: id, x: point.x, y: point.y };
@@ -105,68 +161,88 @@ export function usePhotoActions() {
     try {
       setSegmentingId(id);
       setSegPreviewUri(null);
+      setSegMaskUri(null);
       setSegAssetId(null);
 
       const fileName = `${id}.jpg`;
 
-      const dataUrl = await sam3dSegment({
+      const iw = asset.width || 1;
+      const ih = asset.height || 1;
+      const backendPoints = newList.map((p) => ({
+        x: Math.round(p.x * iw),
+        y: Math.round(p.y * ih),
+        label: typeof p.label === "number" ? p.label : 1,
+      }));
+
+      const { segUrl, maskUrl } = await sam3dSegment({
         uri: asset.uri,
         serverFilename: fileName,
-        points: newList,
+        points: backendPoints,
       });
 
-      setSegPreviewUri(dataUrl);
+      console.log("[usePhotoActions] seg result:", {
+        id,
+        segUrl,
+        maskUrl,
+      });
+
+      if (!segUrl && !maskUrl) {
+        throw new Error("segment response missing segUrl/maskUrl");
+      }
+
+      const ts = Date.now();
+      const segUrlWithTs = segUrl ? `${segUrl}?t=${ts}` : null;
+      const maskUrlWithTs = maskUrl ? `${maskUrl}?t=${ts}` : null;
+
+      const urlsToPrefetch = [segUrlWithTs, maskUrlWithTs].filter(Boolean) as string[];
+      await Promise.all(urlsToPrefetch.map((u) => RNImage.prefetch(u)));
+
+      setSegPreviewUri(segUrlWithTs ?? null);
+      setSegMaskUri(maskUrlWithTs ?? segUrlWithTs ?? null);
       setSegAssetId(id);
 
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     } catch (e: any) {
+      console.warn("[usePhotoActions] segment error:", e);
       Alert.alert("Segmentation failed", e?.message ?? "Unknown error");
     } finally {
       setSegmentingId(null);
     }
   };
 
-  /** 生成 3D：调用后端，返回 glbUrl，打开 3D modal */
+  /** 生成 3D */
   const generate3D = async (asset: MyAsset) => {
-    // 必须先有这个图片的分割结果
-    if (!segPreviewUri || segAssetId !== asset.id) return;
-
-    // 必须有最近一次点击点
     const last = lastPointRef.current;
     if (!last || last.assetId !== asset.id) return;
 
-    // 避免重复点击
+    if (!segMaskUri && !segPreviewUri) return;
     if (generatingId) return;
 
     try {
-      setGeneratingId(asset.id);      // 全局「Generating 3D...」
-      setPreviewLoading(true);        // modal 里的小 loading
+      setGeneratingId(asset.id);
+      setPreviewLoading(true);
       setBubbleVisible(false);
 
-      const glbUrl = await sam3dGenerate3D({
+      const { glbUrl } = await sam3dGenerate3D({
         uri: asset.uri,
         serverFilename: `${asset.id}.jpg`,
-        x: last.x,
-        y: last.y,
       });
 
-      // 成功：直接给 modal 用
       setPreviewGlbUrl(glbUrl);
     } catch (e: any) {
       Alert.alert("3D Error", e?.message ?? "Unknown error");
     } finally {
-      // ✅ 不管成功失败，都关 loading
       setGeneratingId(null);
       setPreviewLoading(false);
     }
   };
 
   return {
-    // state
     points,
     segmentingId,
     generatingId,
     segPreviewUri,
+    segMaskUri,
     segAssetId,
     previewGlbUrl,
     previewLoading,
@@ -174,7 +250,6 @@ export function usePhotoActions() {
     bubbleVisible,
     bubblePos,
 
-    // setters / actions
     setImgLayout,
     mapTouch,
     showBubble,
@@ -186,3 +261,5 @@ export function usePhotoActions() {
     setBubbleVisible,
   };
 }
+
+export default usePhotoActions;
